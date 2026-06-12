@@ -1,0 +1,28 @@
+# public_html/.htaccess — eng-alaa.com
+# ─────────────────────────────────────────────────────────────
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # ── حماية ملف الإعدادات السري ─────────────────────────────
+  RewriteRule ^api/config\.php$ - [F,L]
+
+  # ── السماح لـ api/ و assets/ و uploads/ بالمرور مباشرة ────
+  RewriteCond %{REQUEST_URI} ^/api/ [OR]
+  RewriteCond %{REQUEST_URI} ^/assets/ [OR]
+  RewriteCond %{REQUEST_URI} ^/uploads/
+  RewriteRule ^ - [L]
+
+  # ── كل الباقي → index.html (React SPA) ────────────────────
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /index.html [L]
+</IfModule>
+
+# ── CORS Headers ──────────────────────────────────────────────
+<IfModule mod_headers.c>
+  Header set Access-Control-Allow-Origin "https://eng-alaa.com"
+  Header set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+  Header set Access-Control-Allow-Headers "Content-Type, Authorization"
+</IfModule>

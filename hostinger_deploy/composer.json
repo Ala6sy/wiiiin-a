@@ -1,0 +1,11 @@
+{
+  "name": "alaa/agri-portal",
+  "description": "Agricultural portal backend – PDF generation via dompdf",
+  "require": {
+    "php": ">=8.0",
+    "dompdf/dompdf": "^2.0"
+  },
+  "config": {
+    "optimize-autoloader": true
+  }
+}

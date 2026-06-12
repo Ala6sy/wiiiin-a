@@ -1,0 +1,11 @@
+# منع تنفيذ PHP داخل مجلد الرفع (أمان مهم!)
+php_flag engine off
+
+# منع تشغيل سكريبتات أخرى
+Options -ExecCGI
+AddHandler cgi-script .php .pl .py .jsp .asp .sh .cgi
+
+# السماح بعرض الصور والـ PDF فقط
+<FilesMatch "\.(jpg|jpeg|png|webp|gif|pdf)$">
+  Allow from all
+</FilesMatch>

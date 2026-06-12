@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.cache/
+
+# ⚠ لا ترفع هذا الملف على GitHub — يحتوي على بيانات قاعدة البيانات السرية
+hostinger_deploy/api/config.php
+public_html/api/config.php
+api/config.php
+
+# ملفات النظام
+.DS_Store
+Thumbs.db
+*.log
