@@ -124,20 +124,31 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
     line.style.setProperty('padding-bottom', '0', 'important');
   });
 
-  /* ─── Chip (اسم + أيقونة): احتفظ بـ inline-flex، استبدل gap بـ margin على النص ─── */
+  /* ─── Chip (اسم + أيقونة): inline-flex + vertical-align:middle للـ chip نفسه ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-name-chip, .cv-skill-bar-name').forEach(chip => {
     chip.style.setProperty('display', 'inline-flex', 'important');
     chip.style.setProperty('flex-direction', 'row', 'important');
     chip.style.setProperty('align-items', 'center', 'important');
     chip.style.setProperty('direction', 'ltr', 'important');
     chip.style.setProperty('gap', '0', 'important');
+    /*
+     * html2canvas أحياناً يعالج inline-flex كـ inline عادي.
+     * vertical-align:middle يضمن أن الـ chip نفسه يتمحور مع سطر الـ pct.
+     */
+    chip.style.setProperty('vertical-align', 'middle', 'important');
   });
 
   /*
-   * بديل gap داخل chip: margin-inline-end على النص (direction:ltr → inline-end = right).
-   * النص يأتي أولاً ثم الأيقونة، فـ margin-end على النص يُباعد الأيقونة عنه.
+   * بديل gap داخل chip: margin-inline-end على النص.
+   *
+   * السبب الجذري لنزول الاسم: الأيقونة لها vertical-align:middle أما النص
+   * له vertical-align:baseline (الافتراضي). baseline أسفل من middle خطّ x،
+   * فيظهر النص أنزل من الأيقونة. الحل: نضع vertical-align:middle على النص
+   * و display:inline-block (شرط تفعيل vertical-align على عنصر span).
    */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-name-text').forEach(txt => {
+    txt.style.setProperty('display', 'inline-block', 'important');
+    txt.style.setProperty('vertical-align', 'middle', 'important');
     txt.style.setProperty('margin-inline-end', vars.iconNameGap, 'important');
   });
 
@@ -149,7 +160,7 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
     track.style.setProperty('clear', 'both', 'important');
   });
 
-  /* ─── الأيقونات: ثبّت الحجم — onclone لا يرث .cv-export-offscreen → max-width:100% ─── */
+  /* ─── الأيقونات: ثبّت الحجم + vertical-align متوافق مع النص ─── */
   const iconPx = vars.iconSize || '14px';
   root.querySelectorAll<HTMLElement>('.cv-skill-icon').forEach(icon => {
     icon.style.setProperty('width', iconPx, 'important');
