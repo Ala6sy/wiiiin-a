@@ -23,6 +23,7 @@ type SkillLayoutVars = {
   headerBarGap: string;
   rowGap: string;
   nameLineHeight: string;
+  iconSize: string;
 };
 
 export type CvPdfLink = {
@@ -59,6 +60,7 @@ function readSkillLayoutVars(sheet: HTMLElement): SkillLayoutVars {
     headerBarGap: cs.getPropertyValue('--cv-skill-header-bar-gap').trim() || '10px',
     rowGap: cs.getPropertyValue('--cv-skill-row-gap').trim() || '10px',
     nameLineHeight: cs.getPropertyValue('--cv-skill-name-line-height').trim() || '16px',
+    iconSize: cs.getPropertyValue('--cv-skill-icon-size').trim() || '14px',
   };
 }
 
@@ -92,7 +94,7 @@ function skillGapPx(gap: string, extra = 6): string {
   return '12px';
 }
 
-/** html2canvas يتجاهل flex-gap — نستخدم margins صريحة كما في المعاينة */
+/** html2canvas يتجاهل flex-gap — نستخدم margins صريحة + نثبّت حجم الأيقونات (onclone لا يرث فئات الحاوية) */
 function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): void {
   const lineGap = skillGapPx(vars.headerBarGap, 6);
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-row').forEach(row => {
@@ -114,6 +116,7 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
     chip.style.setProperty('flex-direction', 'row', 'important');
     chip.style.setProperty('align-items', 'center', 'important');
     chip.style.setProperty('direction', 'ltr', 'important');
+    chip.style.setProperty('gap', '4px', 'important');
   });
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-track').forEach(track => {
     track.style.setProperty('display', 'block', 'important');
@@ -121,17 +124,36 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
     track.style.setProperty('margin-top', '0', 'important');
     track.style.setProperty('clear', 'both', 'important');
   });
+  /* ثبّت حجم الأيقونة — onclone لا يرث .cv-export-offscreen فتطبّق قاعدة img{max-width:100%} عليه */
+  const iconPx = vars.iconSize || '14px';
+  root.querySelectorAll<HTMLElement>('.cv-skill-icon').forEach(icon => {
+    icon.style.setProperty('width', iconPx, 'important');
+    icon.style.setProperty('height', iconPx, 'important');
+    icon.style.setProperty('max-width', 'none', 'important');
+    icon.style.setProperty('max-height', 'none', 'important');
+    icon.style.setProperty('min-width', iconPx, 'important');
+    icon.style.setProperty('min-height', iconPx, 'important');
+    icon.style.setProperty('flex-shrink', '0', 'important');
+    icon.style.setProperty('display', 'inline-block', 'important');
+    icon.style.setProperty('vertical-align', 'middle', 'important');
+    icon.style.setProperty('object-fit', 'contain', 'important');
+  });
 }
 
+/**
+ * حاوية التقاط مخفية تماماً — position:fixed left:-12000px
+ * html2canvas يلتقط العناصر ذات position:fixed حتى لو كانت خارج الشاشة.
+ * وضعها عند left:0 كان يسبّب مشاكل على الجوال (إعادة تدفق + قصّ 794px).
+ */
 function buildCaptureViewport(widthPx: number, heightPx: number): HTMLDivElement {
   const viewport = mountExportCaptureShell(widthPx, heightPx);
   viewport.style.setProperty('position', 'fixed', 'important');
-  viewport.style.setProperty('left', '0', 'important');
+  viewport.style.setProperty('left', '-12000px', 'important');
   viewport.style.setProperty('top', '0', 'important');
-  viewport.style.setProperty('opacity', '0.02', 'important');
+  viewport.style.setProperty('opacity', '1', 'important');
   viewport.style.setProperty('visibility', 'visible', 'important');
   viewport.style.setProperty('overflow', 'hidden', 'important');
-  viewport.style.setProperty('z-index', '2147483646', 'important');
+  viewport.style.setProperty('z-index', '-1', 'important');
   viewport.style.setProperty('pointer-events', 'none', 'important');
   return viewport;
 }
@@ -167,6 +189,7 @@ function html2canvasOptions(
           img.style.visibility = 'hidden';
         }
       });
+      /* يجب تطبيق إصلاح المهارات والـ QR على المستند المستنسخ أيضاً — لا يرث فئات الحاوية */
       applySkillLayoutForCapture(doc, skillVars);
       applyQrLayoutForCapture(doc);
     },
@@ -259,8 +282,15 @@ async function captureSheet(liveSheet: HTMLElement, pageIndex: number, pageTotal
     applyQrLayoutForCapture(clone);
     prepareSheetForCapture(clone);
     restoreClip = lockSheetClipForCapture(clone);
+
+    /* فرض إعادة حساب التخطيط قبل قياس offsetTop في hideFlowBlocksOutsideWindow —
+       بدونه، التعديلات السابقة (lockSheetSize، reflowFooter…) لم يُطبّقها المتصفح بعد
+       فتأتي قيم offsetTop خاطئة وتُخفى كتل مرئية أو تُظهر كتل خارج النافذة */
+    void clone.offsetHeight;
+
     restoreHidden = hideFlowBlocksOutsideWindow(clone);
 
+    /* انتظر إطارين إضافيين بعد إخفاء الكتل لضمان استقرار التخطيط قبل html2canvas */
     await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
 
     const links = collectPdfLinks(clone);

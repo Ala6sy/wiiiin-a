@@ -3,7 +3,7 @@
  */
 import { CV_EXPORT_PX, CV_PAGE_H_PX } from './cvConstants';
 import { showCvPdfPreview, cvPdfPreviewLabels } from './cvPdfDownload';
-import { waitForCvPagedLayout } from './cvExportReady';
+import { waitForCvPagedLayout, waitForCvExportReady } from './cvExportReady';
 import { lockCvExportDimensions, sheetHasVisibleBodyContent } from './cvExportCapture';
 import { captureCvSheetsToPdfBlob } from './cvPdfCapture';
 import { exportLibsReady } from './pdfCaptureLibs';
@@ -52,6 +52,9 @@ export async function printCvFromRoot(
   const prevTitle = document.title;
   if (documentTitle) document.title = documentTitle.replace(/\.pdf$/i, '');
 
+  const isMobile = isMobileCvDevice();
+  const baseTimeout = isMobile ? 45000 : 30000;
+
   stack.style.width = `${CV_EXPORT_PX}px`;
   stack.style.opacity = '1';
   stack.style.visibility = 'visible';
@@ -60,7 +63,17 @@ export async function printCvFromRoot(
   if (exportHost) lockCvExportDimensions(exportHost, CV_EXPORT_PX, CV_PAGE_H_PX);
 
   await waitForPrintPaint();
-  await waitForCvPagedLayout(stack, isMobileCvDevice() ? 40000 : 30000);
+
+  /* على الجوال: تأكد أن الصور/العناوين/QR محمّلة قبل انتظار تقسيم الصفحات
+     (تأخر تحميل الصور يغيّر scrollHeight ويُربك خوارزمية التقسيم) */
+  if (isMobile) {
+    await waitForCvExportReady(exportHost ?? stack, baseTimeout);
+  }
+
+  await waitForCvPagedLayout(stack, baseTimeout);
+
+  /* تحقق إضافي من الصور بعد اكتمال التقسيم — QR قد تُحمَّل بعد اكتمال الصفحات */
+  await waitForCvExportReady(exportHost ?? stack, Math.min(baseTimeout, 8000));
 
   const measure = stack.querySelector<HTMLElement>('.cv-paged-measure');
   const measureDisplay = measure?.style.display ?? '';

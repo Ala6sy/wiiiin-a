@@ -1002,6 +1002,24 @@ body {
   max-width: none !important;
   height: auto;
 }
+/* أيقونات المهارات في حاويات التصدير — ثبّت الحجم ومنع max-width:100% من كسره */
+.plant-report-export-host img.cv-skill-icon,
+.plant-report-export-capture-root img.cv-skill-icon,
+.cv-export-offscreen img.cv-skill-icon,
+.cv-print-mount img.cv-skill-icon,
+.cv-preview-stack img.cv-skill-icon,
+.cv-a4-sheet img.cv-skill-icon {
+  width: var(--cv-skill-icon-size, 14px) !important;
+  height: var(--cv-skill-icon-size, 14px) !important;
+  min-width: var(--cv-skill-icon-size, 14px) !important;
+  min-height: var(--cv-skill-icon-size, 14px) !important;
+  max-width: none !important;
+  max-height: none !important;
+  flex-shrink: 0 !important;
+  object-fit: contain !important;
+  display: inline-block !important;
+  vertical-align: middle !important;
+}
 /* LTR inline content inside RTL CV (phone, email, dates) */
 .cv-ltr {
   direction: ltr;

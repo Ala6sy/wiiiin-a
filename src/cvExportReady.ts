@@ -55,12 +55,22 @@ export async function waitForCvExportReady(
   }
 }
 
-/** انتظر اكتمال تقسيم صفحات A4 قبل التصدير — يطابق المعاينة */
+function isMobilePagedWait(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+    || (typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 768px)').matches);
+}
+
+/** انتظر اكتمال تقسيم صفحات A4 قبل التصدير — يطابق المعاينة
+ *  على الجوال نشترط 5 إطارات مستقرة بدل 3 لأن العرض الضيق يبطّئ الحساب */
 export async function waitForCvPagedLayout(
   root: HTMLElement | null,
   timeoutMs = 12000,
 ): Promise<number> {
   if (!root) return 0;
+  const isMobile = isMobilePagedWait();
+  const stableRequired = isMobile ? 5 : 3;
+
   const start = Date.now();
   let lastCount = -1;
   let stable = 0;
@@ -80,7 +90,13 @@ export async function waitForCvPagedLayout(
     if ((bodyReady && countReady && budgetsReady) || cloneReady || (count > 0 && !measureBody && budgetsReady)) {
       if (count === lastCount) {
         stable += 1;
-        if (stable >= 3) return count;
+        if (stable >= stableRequired) {
+          /* تأخير إضافي على الجوال بعد الاستقرار — يضمن اكتمال أي صورة متأخرة */
+          if (isMobile) {
+            await new Promise(r => setTimeout(r, 200));
+          }
+          return count;
+        }
       } else {
         stable = 0;
         lastCount = count;
