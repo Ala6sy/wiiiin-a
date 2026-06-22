@@ -20,10 +20,11 @@ const PAGE_W_MM = 210;
 const PAGE_H_MM = 297;
 
 type SkillLayoutVars = {
-  headerBarGap: string;
-  rowGap: string;
-  nameLineHeight: string;
-  iconSize: string;
+  headerBarGap: string;   /* gap between name-line and bar-track (flex-column gap) */
+  rowGap: string;         /* margin-bottom between skill rows */
+  nameLineHeight: string; /* min-height of name line */
+  iconSize: string;       /* --cv-skill-icon-size */
+  iconNameGap: string;    /* gap between name text and icon inside chip */
 };
 
 export type CvPdfLink = {
@@ -45,7 +46,6 @@ function isMobileCapture(): boolean {
     || (typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 768px)').matches);
 }
 
-/** دقة اللقطة — الجوال كان scale=1 فكانت الصورة ضبابية */
 function captureScalesToTry(): number[] {
   const max = Math.max(2, CV_EXPORT_SCALE);
   if (isMobileCapture()) return max >= 3 ? [3, 2, 1] : [2, 1];
@@ -61,6 +61,7 @@ function readSkillLayoutVars(sheet: HTMLElement): SkillLayoutVars {
     rowGap: cs.getPropertyValue('--cv-skill-row-gap').trim() || '10px',
     nameLineHeight: cs.getPropertyValue('--cv-skill-name-line-height').trim() || '16px',
     iconSize: cs.getPropertyValue('--cv-skill-icon-size').trim() || '14px',
+    iconNameGap: cs.getPropertyValue('--cv-skill-icon-name-gap').trim() || '6px',
   };
 }
 
@@ -88,19 +89,24 @@ function lockSheetSize(sheet: HTMLElement, widthPx: number, heightPx: number): v
   sheet.style.setProperty('box-sizing', 'border-box', 'important');
 }
 
-function skillGapPx(gap: string, extra = 6): string {
-  const n = parseFloat(gap);
-  if (Number.isFinite(n) && n > 0) return `${n + extra}px`;
-  return '12px';
-}
-
-/** html2canvas يتجاهل flex-gap — نستخدم margins صريحة + نثبّت حجم الأيقونات (onclone لا يرث فئات الحاوية) */
+/**
+ * إصلاح تخطيط المهارات لـ html2canvas:
+ *
+ * html2canvas 1.4.1 يتجاهل `gap` على flex وgrid.
+ * الحل: نُبقي flex-column على .cv-skill-bar-row (لا نغيّر display)
+ * ونستبدل gap بـ margin-bottom صريحة على العناصر الأبناء.
+ * كذلك نستبدل gap داخل .cv-skill-bar-name-chip بـ margin على النص.
+ */
 function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): void {
-  const lineGap = skillGapPx(vars.headerBarGap, 6);
+  /* ─── Row: احتفظ بـ flex-column، فقط اقتل gap واستبدله بـ margin على السطر ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-row').forEach(row => {
-    row.style.setProperty('display', 'block', 'important');
+    row.style.setProperty('display', 'flex', 'important');
+    row.style.setProperty('flex-direction', 'column', 'important');
+    row.style.setProperty('gap', '0', 'important');           /* html2canvas يتجاهل gap */
     row.style.setProperty('margin-bottom', vars.rowGap, 'important');
   });
+
+  /* ─── السطر (اسم + نسبة): flex-row، استبدل gap الصف بـ margin-bottom على هذا السطر ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-line, .cv-skill-bar-header').forEach(line => {
     line.style.setProperty('display', 'flex', 'important');
     line.style.setProperty('flex-direction', 'row', 'important');
@@ -108,23 +114,42 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
     line.style.setProperty('justify-content', 'space-between', 'important');
     line.style.setProperty('width', '100%', 'important');
     line.style.setProperty('min-height', vars.nameLineHeight, 'important');
-    line.style.setProperty('margin-bottom', lineGap, 'important');
+    line.style.setProperty('gap', '0', 'important');
+    /*
+     * هذا هو المسافة بين سطر الاسم وشريط المهارة.
+     * في CSS العادي كانت gap على .cv-skill-bar-row = --cv-skill-header-bar-gap.
+     * نضعها هنا كـ margin-bottom على السطر.
+     */
+    line.style.setProperty('margin-bottom', vars.headerBarGap, 'important');
     line.style.setProperty('padding-bottom', '0', 'important');
   });
+
+  /* ─── Chip (اسم + أيقونة): احتفظ بـ inline-flex، استبدل gap بـ margin على النص ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-name-chip, .cv-skill-bar-name').forEach(chip => {
     chip.style.setProperty('display', 'inline-flex', 'important');
     chip.style.setProperty('flex-direction', 'row', 'important');
     chip.style.setProperty('align-items', 'center', 'important');
     chip.style.setProperty('direction', 'ltr', 'important');
-    chip.style.setProperty('gap', '4px', 'important');
+    chip.style.setProperty('gap', '0', 'important');
   });
+
+  /*
+   * بديل gap داخل chip: margin-inline-end على النص (direction:ltr → inline-end = right).
+   * النص يأتي أولاً ثم الأيقونة، فـ margin-end على النص يُباعد الأيقونة عنه.
+   */
+  root.querySelectorAll<HTMLElement>('.cv-skill-bar-name-text').forEach(txt => {
+    txt.style.setProperty('margin-inline-end', vars.iconNameGap, 'important');
+  });
+
+  /* ─── الشريط: block صريح لضمان القصّ الكامل ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-track').forEach(track => {
     track.style.setProperty('display', 'block', 'important');
     track.style.setProperty('width', '100%', 'important');
     track.style.setProperty('margin-top', '0', 'important');
     track.style.setProperty('clear', 'both', 'important');
   });
-  /* ثبّت حجم الأيقونة — onclone لا يرث .cv-export-offscreen فتطبّق قاعدة img{max-width:100%} عليه */
+
+  /* ─── الأيقونات: ثبّت الحجم — onclone لا يرث .cv-export-offscreen → max-width:100% ─── */
   const iconPx = vars.iconSize || '14px';
   root.querySelectorAll<HTMLElement>('.cv-skill-icon').forEach(icon => {
     icon.style.setProperty('width', iconPx, 'important');
@@ -142,8 +167,7 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
 
 /**
  * حاوية التقاط مخفية تماماً — position:fixed left:-12000px
- * html2canvas يلتقط العناصر ذات position:fixed حتى لو كانت خارج الشاشة.
- * وضعها عند left:0 كان يسبّب مشاكل على الجوال (إعادة تدفق + قصّ 794px).
+ * left:0 كان يسبّب مشاكل على الجوال (إعادة تدفق + قصّ 794px).
  */
 function buildCaptureViewport(widthPx: number, heightPx: number): HTMLDivElement {
   const viewport = mountExportCaptureShell(widthPx, heightPx);
@@ -189,14 +213,17 @@ function html2canvasOptions(
           img.style.visibility = 'hidden';
         }
       });
-      /* يجب تطبيق إصلاح المهارات والـ QR على المستند المستنسخ أيضاً — لا يرث فئات الحاوية */
+      /*
+       * يجب تطبيق إصلاح المهارات والـ QR على المستند المستنسخ أيضاً.
+       * onclone يستلم document كامل — لا يرث فئات الحاوية (.cv-export-offscreen)،
+       * لذا تُطبَّق قاعدة img{max-width:100%!important} من media-query الجوال.
+       */
       applySkillLayoutForCapture(doc, skillVars);
       applyQrLayoutForCapture(doc);
     },
   };
 }
 
-/** روابط QR والمحفظة — تُضاف كطبقة تفاعلية فوق صورة PDF */
 function collectPdfLinks(sheet: HTMLElement): CvPdfLink[] {
   const links: CvPdfLink[] = [];
   const sheetRect = sheet.getBoundingClientRect();
@@ -283,14 +310,15 @@ async function captureSheet(liveSheet: HTMLElement, pageIndex: number, pageTotal
     prepareSheetForCapture(clone);
     restoreClip = lockSheetClipForCapture(clone);
 
-    /* فرض إعادة حساب التخطيط قبل قياس offsetTop في hideFlowBlocksOutsideWindow —
-       بدونه، التعديلات السابقة (lockSheetSize، reflowFooter…) لم يُطبّقها المتصفح بعد
-       فتأتي قيم offsetTop خاطئة وتُخفى كتل مرئية أو تُظهر كتل خارج النافذة */
+    /*
+     * فرض إعادة حساب التخطيط قبل قياس offsetTop في hideFlowBlocksOutsideWindow.
+     * بدون هذا، التعديلات السابقة (lockSheetSize، reflowFooter…) لم يُطبّقها المتصفح بعد
+     * فتأتي قيم offsetTop خاطئة وتُخفى كتل مرئية أو تُظهر كتل خارج النافذة.
+     */
     void clone.offsetHeight;
 
     restoreHidden = hideFlowBlocksOutsideWindow(clone);
 
-    /* انتظر إطارين إضافيين بعد إخفاء الكتل لضمان استقرار التخطيط قبل html2canvas */
     await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
 
     const links = collectPdfLinks(clone);
@@ -322,7 +350,6 @@ async function captureSheet(liveSheet: HTMLElement, pageIndex: number, pageTotal
   }
 }
 
-/** لقطات متعددة → PDF A4 (210×297mm) */
 export async function captureCvSheetsToPdfBlob(sheets: HTMLElement[]): Promise<Blob> {
   if (!exportLibsReady()) {
     throw new Error('مكتبة التصدير غير محمّلة — حدّث الصفحة (Ctrl+F5)');

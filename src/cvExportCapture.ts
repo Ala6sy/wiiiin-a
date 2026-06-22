@@ -1,4 +1,4 @@
-import { CV_EXPORT_PX, CV_PAGE_H_PX } from './cvConstants';
+import { CV_EXPORT_PX } from './cvConstants';
 
 /** تحويل translateY إلى marginTop — html2canvas يحترم القصّ بعدها */
 export function flattenCvSheetShift(sheet: HTMLElement): () => void {
@@ -87,9 +87,13 @@ export function lockSheetClipForCapture(sheet: HTMLElement): () => void {
     });
   });
 
+  /*
+   * لا نضع margin-top:0 هنا — reflowCvSheetFooterForCapture يحسب القيمة الصحيحة
+   * لإبقاء التذييل في أسفل الصفحة. الكتابة فوقها هنا كان يُشوّه موضع التذييل.
+   */
   const footerWrap = frame?.querySelector<HTMLElement>(':scope > div:last-child');
   if (footerWrap?.querySelector('.cv-page-footer-band, .cv-footer-bar-layout, .cv-footer-full-bleed')) {
-    lock(footerWrap, { 'flex-shrink': '0', 'margin-top': '0' });
+    lock(footerWrap, { 'flex-shrink': '0' });
   }
 
   return () => {
@@ -100,28 +104,62 @@ export function lockSheetClipForCapture(sheet: HTMLElement): () => void {
   };
 }
 
-/** تخطيط QR ثابت عند التصدير — يمنع امتداد الباركود عرض الصفحة */
+/**
+ * تخطيط QR ثابت عند التصدير — يمنع امتداد الباركود عرض الصفحة.
+ *
+ * html2canvas 1.4.1 يتجاهل gap على flex وعلى grid.
+ * الحل:
+ *   - grid: اضبط gap=0 وأضف padding-inline على الخلايا.
+ *   - cell: اضبط gap=0 وأضف margin-bottom على الرابط (بدل gap بين الصورة والتسمية).
+ */
 export function applyQrLayoutForCapture(root: ParentNode): void {
   root.querySelectorAll<HTMLElement>('.cv-docs-qr-grid').forEach(grid => {
     const cols = grid.getAttribute('data-qr-cols') || '3';
+    const colCount = parseInt(cols, 10) || 3;
+    /* padding-inline على الخلايا يعطي مسافة أفقية بدلاً من column-gap المتجاهَل */
+    const cellPadPx = colCount >= 4 ? 3 : 5;
+    grid.setAttribute('data-cell-pad', String(cellPadPx));
     grid.style.setProperty('display', 'grid', 'important');
     grid.style.setProperty('grid-template-columns', `repeat(${cols}, minmax(0, 1fr))`, 'important');
     grid.style.setProperty('width', '100%', 'important');
     grid.style.setProperty('align-items', 'start', 'important');
+    grid.style.setProperty('gap', '0', 'important');         /* أوقف gap المتجاهَل */
+    grid.style.setProperty('column-gap', '0', 'important');
+    grid.style.setProperty('row-gap', '0', 'important');
   });
+
   root.querySelectorAll<HTMLElement>('.cv-docs-qr-cell').forEach(cell => {
+    const grid = cell.closest<HTMLElement>('.cv-docs-qr-grid');
+    const padPx = Number(grid?.getAttribute('data-cell-pad') ?? 5);
     cell.style.setProperty('display', 'flex', 'important');
     cell.style.setProperty('flex-direction', 'column', 'important');
     cell.style.setProperty('align-items', 'center', 'important');
     cell.style.setProperty('min-width', '0', 'important');
-    cell.style.setProperty('overflow', 'hidden', 'important');
+    cell.style.setProperty('overflow', 'visible', 'important');  /* لا تقصّ التسمية */
+    cell.style.setProperty('padding-inline', `${padPx}px`, 'important');
+    cell.style.setProperty('padding-bottom', '6px', 'important');
+    cell.style.setProperty('gap', '0', 'important');             /* أوقف gap المتجاهَل */
+    cell.style.setProperty('text-align', 'center', 'important');
   });
+
   root.querySelectorAll<HTMLElement>('.cv-docs-qr-link').forEach(link => {
     link.style.setProperty('display', 'block', 'important');
-    link.style.setProperty('width', 'max-content', 'important');
+    link.style.setProperty('width', 'fit-content', 'important');
     link.style.setProperty('max-width', '100%', 'important');
     link.style.setProperty('margin-inline', 'auto', 'important');
+    /* استبدال gap:6px بين صورة QR والتسمية النصية */
+    link.style.setProperty('margin-bottom', '6px', 'important');
   });
+
+  root.querySelectorAll<HTMLElement>('.cv-docs-qr-caption').forEach(cap => {
+    cap.style.setProperty('display', 'block', 'important');
+    cap.style.setProperty('width', '100%', 'important');
+    cap.style.setProperty('text-align', 'center', 'important');
+    cap.style.setProperty('word-break', 'break-word', 'important');
+    cap.style.setProperty('overflow-wrap', 'anywhere', 'important');
+    cap.style.setProperty('white-space', 'normal', 'important');
+  });
+
   root.querySelectorAll<HTMLImageElement>('.cv-docs-qr-img').forEach(img => {
     const attrW = Number(img.getAttribute('width')) || 68;
     const attrH = Number(img.getAttribute('height')) || attrW;
@@ -135,6 +173,7 @@ export function applyQrLayoutForCapture(root: ParentNode): void {
     img.style.setProperty('object-fit', 'contain', 'important');
     img.style.setProperty('display', 'block', 'important');
     img.style.setProperty('flex-shrink', '0', 'important');
+    img.style.setProperty('margin-inline', 'auto', 'important');
   });
 }
 
@@ -217,7 +256,16 @@ export function hideFlowBlocksOutsideWindow(sheet: HTMLElement): () => void {
   };
 }
 
-/** إعادة حساب ارتفاع المحتوى ليبقى التذييل داخل الورقة — DOM الحي + onclone */
+/**
+ * إعادة تدفق التذييل ليبقى في أسفل الورقة.
+ *
+ * المشكلة: html2canvas لا يدعم `margin-top: auto` في flex containers.
+ * في المعاينة التفاعلية يجعل margin-top:auto التذييل في أسفل الصفحة.
+ * عند الالتقاط يجب استبدالها بـ margin-top: Npx محسوبة.
+ *
+ * المشكلة الثانية: .cv-footer-bar-layout يستخدم gap:5 (لا يدعمه html2canvas).
+ * الحل: نضيف margin-bottom على .cv-footer-color-bar بدلاً من الـ gap.
+ */
 export function reflowCvSheetFooterForCapture(sheet: HTMLElement): void {
   const frame = sheet.querySelector<HTMLElement>('.cv-page-frame--paged');
   const headerWrap = frame?.querySelector<HTMLElement>(':scope > div:first-child');
@@ -228,6 +276,7 @@ export function reflowCvSheetFooterForCapture(sheet: HTMLElement): void {
   );
   if (!frame || !bodyWin || !footerWrap || !footer) return;
 
+  /* تصحيح full-bleed: أزل الـ margin السالبة قبل القياس */
   sheet.querySelectorAll<HTMLElement>('.cv-footer-full-bleed').forEach(el => {
     el.style.setProperty('margin-inline', '0', 'important');
     el.style.setProperty('margin-bottom', '0', 'important');
@@ -244,29 +293,52 @@ export function reflowCvSheetFooterForCapture(sheet: HTMLElement): void {
 
   if (headerWrap) headerWrap.style.setProperty('flex-shrink', '0', 'important');
   footerWrap.style.setProperty('flex-shrink', '0', 'important');
-  footerWrap.style.setProperty('margin-top', '0', 'important');
   footer.style.setProperty('flex-shrink', '0', 'important');
   footer.style.setProperty('visibility', 'visible', 'important');
   footer.style.setProperty('opacity', '1', 'important');
 
+  /*
+   * إصلاح gap:5 داخل .cv-footer-bar-layout (بين الشريط اللوني والنص أسفله).
+   * html2canvas يتجاهل gap على flex — نستبدله بـ margin-bottom على الشريط.
+   */
+  sheet.querySelectorAll<HTMLElement>('.cv-footer-bar-layout').forEach(barLayout => {
+    barLayout.style.setProperty('gap', '0', 'important');
+  });
+  sheet.querySelectorAll<HTMLElement>('.cv-footer-color-bar').forEach(colorBar => {
+    colorBar.style.setProperty('margin-bottom', '5px', 'important');
+  });
+
+  /* اقرأ أبعاد الإطار والترويسة والتذييل بعد إجبار إعادة الحساب */
   void sheet.offsetHeight;
+
+  const frameInnerH = frame.clientHeight; /* ارتفاع الإطار بعد padding الورقة */
+  const headerH = headerWrap?.offsetHeight ?? 0;
+  const footerH = footerWrap.offsetHeight;
+
+  /* احسب bodyH من data-cv-body-budget أو من القياس */
   const budgetAttr = bodyWin.getAttribute('data-cv-body-budget');
   const budgetFromAttr = budgetAttr ? Number.parseFloat(budgetAttr) : NaN;
   let bodyH = Number.isFinite(budgetFromAttr) && budgetFromAttr > 0
     ? budgetFromAttr
     : 0;
   if (bodyH <= 0) {
-    const frameH = frame.clientHeight;
-    const headerH = headerWrap?.offsetHeight ?? 0;
-    const footerH = footerWrap.offsetHeight;
-    bodyH = Math.max(80, frameH - headerH - footerH);
+    bodyH = Math.max(80, frameInnerH - headerH - footerH);
   }
 
+  /* اضبط ارتفاع نافذة المحتوى */
   bodyWin.style.setProperty('flex-shrink', '0', 'important');
   bodyWin.style.setProperty('height', `${bodyH}px`, 'important');
   bodyWin.style.setProperty('max-height', `${bodyH}px`, 'important');
   bodyWin.style.setProperty('overflow', 'hidden', 'important');
   bodyWin.style.setProperty('position', 'relative', 'important');
+
+  /*
+   * احسب المسافة المتبقية بين نهاية المحتوى ورأس التذييل.
+   * هذا يحلّ محلّ margin-top:auto الذي لا يدعمه html2canvas.
+   * المعادلة: gap = frame_inner_height - header - body - footer
+   */
+  const gap = Math.max(0, frameInnerH - headerH - bodyH - footerH);
+  footerWrap.style.setProperty('margin-top', `${gap}px`, 'important');
 }
 
 /** html2canvas على الجوال لا يلتقط عناصر opacity≈0 — اجعل الورقة مرئية قبل اللقطة */
