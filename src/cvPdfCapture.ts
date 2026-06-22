@@ -108,15 +108,46 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
   const iconPx = vars.iconSize || '14px';
   const iconSizeNum = parseFloat(iconPx) || 14;
 
-  /* ─── Row: احتفظ بـ flex-column، استبدل gap بـ margin على السطر ─── */
+  /*
+   * ─── Row: flex-column، gap=0، margin-bottom للمسافة بين الصفوف ────────────
+   *
+   * المشكلة السابقة: وضعنا margin-bottom على .cv-skill-bar-line لإنشاء فراغ
+   * بينه وبين الشريط. لكن CSS لديه margin:0!important على .cv-skill-bar-line
+   * وهذا أدى إلى صراع مع html2canvas وجعل السطر يظهر في الأسفل.
+   *
+   * الحل الجذري: بدل margin → نُدرج عنصر <div> فاصل صريح (spacer) بين
+   * سطر الاسم والشريط. عنصر DOM حقيقي بارتفاع ثابت — لا صراع CSS مطلقاً.
+   */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-row').forEach(row => {
     row.style.setProperty('display', 'flex', 'important');
     row.style.setProperty('flex-direction', 'column', 'important');
     row.style.setProperty('gap', '0', 'important');
     row.style.setProperty('margin-bottom', vars.rowGap, 'important');
+
+    /* أدرج spacer بين سطر الاسم والشريط إن لم يكن موجوداً */
+    if (!row.querySelector('.cv-h2c-spacer')) {
+      const line = row.querySelector<HTMLElement>('.cv-skill-bar-line, .cv-skill-bar-header');
+      const track = row.querySelector<HTMLElement>('.cv-skill-bar-track');
+      if (line && track) {
+        const spacer = (root instanceof Document ? root : row.ownerDocument!).createElement('div');
+        spacer.className = 'cv-h2c-spacer';
+        spacer.style.cssText = [
+          'display:block',
+          `height:${vars.headerBarGap}`,
+          'width:100%',
+          'flex-shrink:0',
+          'margin:0',
+          'padding:0',
+          'border:none',
+          'background:transparent',
+          'pointer-events:none',
+        ].join('!important;') + '!important';
+        row.insertBefore(spacer, track);
+      }
+    }
   });
 
-  /* ─── سطر الاسم: flex-row، margin-bottom يستبدل gap العمودي ─── */
+  /* ─── سطر الاسم: flex-row، لا margin — الفراغ يأتي من spacer ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-line, .cv-skill-bar-header').forEach(line => {
     line.style.setProperty('display', 'flex', 'important');
     line.style.setProperty('flex-direction', 'row', 'important');
@@ -125,8 +156,8 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
     line.style.setProperty('width', '100%', 'important');
     line.style.setProperty('min-height', vars.nameLineHeight, 'important');
     line.style.setProperty('gap', '0', 'important');
-    line.style.setProperty('margin-bottom', vars.headerBarGap, 'important');
-    line.style.setProperty('padding-bottom', '0', 'important');
+    line.style.setProperty('margin', '0', 'important');
+    line.style.setProperty('padding', '0', 'important');
   });
 
   /*

@@ -1691,12 +1691,6 @@ body {
   direction: ltr !important;
   flex-wrap: nowrap !important;
   margin: 0 !important;
-  /*
-   * html2canvas يتجاهل gap على flex — نجعل الـ line نفسه يحمل المسافة
-   * بين اسم المهارة والشريط. هذا يُعلن بعد margin:0 في نفس القاعدة
-   * فيُلغي margin-bottom:0 ويُطبّق القيمة الصحيحة.
-   */
-  margin-bottom: var(--cv-skill-header-bar-gap, 5px) !important;
   padding: 0 !important;
 }
 .plant-report-export-host .cv-skill-bar-header-cell,
