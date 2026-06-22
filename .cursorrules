@@ -1,0 +1,67 @@
+# eng-alaa.com — قواعد المشروع
+
+## نظام data.json (مكتبة / مقالات / تصاميم)
+
+### مصدر البيانات
+- الملف الرئيسي: `public/data.json`
+- على Hostinger: `public_html/data.json` (بجانب `index.html`)
+- التحديث: SFTP فقط — **لا Build على السيرفر**
+- أداة CSV: `public/content-manager.html` (محلياً أو على الموقع)
+
+### هيكلية JSON (لا تغيّر أسماء الأقسام الجذرية)
+```
+library   → tree + books + view
+articles  → categories + items
+designs   → categories[] → subCategories[] → items[]
+```
+
+### اللغات
+- كل نص للزائر: `{ "ar": "...", "en": "...", "de": "..." }`
+- `languages` في الكتب: مصفوفة `["ar","en","de"]`
+
+### حقول الكتب (library.books)
+| حقل | مطلوب | ملاحظة |
+|-----|--------|--------|
+| id | نعم | فريد |
+| nodeId | نعم | يربط الكتاب بفرع في library.tree |
+| title, author | نعم | ML |
+| driveUrl, previewUrl | موصى | Google Drive |
+| kind | نعم | theory \| practical \| both |
+| academicYear, semester, subject | اختياري | ML — سنة / فصل / مادة |
+| isPaid, price, currency | اختياري | كتب مدفوعة |
+
+### حقول المقالات (articles.items)
+| حقل | مطلوب |
+|-----|--------|
+| id, categoryId | نعم |
+| title, content | نعم (ML) |
+| images | مصفوفة URLs |
+| date | YYYY-MM-DD |
+
+### حقول التصاميم (designs…items)
+| حقل | مطلوب |
+|-----|--------|
+| id, title, desc | نعم (ML) |
+| mainImg | نعم |
+| glbUrl, glbFreeUrl | للمعاينة 3D |
+| videoUrl | اختياري |
+| glbIsPaid, glbPrice, glbCurrency | اختياري |
+
+---
+
+## الحفاظ على ثبات التصميم (مهم جداً)
+
+عند العمل على data.json أو قراءة المحتوى:
+
+1. **ممنوع** تعديل CSS (`*.css`, Tailwind classes, inline styles للتنسيق) إلا بطلب صريح من المستخدم.
+2. **ممنوع** تغيير هيكل المكوّنات (`App.tsx`, بطاقات العرض، الجداول، الترويسات) — المحتوى فقط يتغير.
+3. **مسموح** فقط:
+   - تعديل `public/data.json`
+   - تعديل `src/appData.ts` (تحميل/دمج JSON — بدون UI)
+   - إضافة حقول اختيارية في JSON إذا كان `appData.ts` يدعمها بالفعل
+4. **لا تضف** مكوّنات React جديدة لعرض المحتوى — الموقع يقرأ الحقول الموجودة تلقائياً.
+5. **الصور والروابط**: URLs فقط في JSON — لا تضمّن HTML معقد يكسر التنسيق.
+6. **اختبار**: بعد رفع data.json — حدّث المتصفح (Ctrl+F5) — لا حاجة لـ npm run build للمحتوى فقط.
+
+### ترتيب الأولوية للبيانات
+`data.json` (كتب/مقالات/تصاميم) ← يُطبَّق فوق localStorage عند التحميل.

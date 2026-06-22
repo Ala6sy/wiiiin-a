@@ -1,0 +1,17 @@
+# منع تنفيذ PHP داخل مجلد الرفع (أمان مهم!)
+php_flag engine off
+
+# إصلاح مسار قديم skill → skills
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^skill/(.*)$ skills/$1 [L,R=301]
+</IfModule>
+
+# منع تشغيل سكريبتات أخرى
+Options -ExecCGI
+AddHandler cgi-script .php .pl .py .jsp .asp .sh .cgi
+
+# السماح بعرض الصور والـ PDF فقط
+<FilesMatch "\.(jpg|jpeg|png|webp|gif|svg|pdf)$">
+  Allow from all
+</FilesMatch>

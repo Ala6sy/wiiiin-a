@@ -1,0 +1,7 @@
+المعرّف (ID),معرّف العقدة الأب,الاسم (عربي),الاسم (إنجليزي),الاسم (ألماني)
+lib-main,,مكتبة الهندسة الزراعية,Agricultural Engineering Library,Agrartechnik-Bibliothek
+lib-uqu,lib-main,جامعة أم القيوين,University of Umm Al Quwain,Universität Umm Al Quwain
+year-2024,lib-uqu,2024 / 2025,2024 / 2025,2024 / 2025
+semester-1,year-2024,الفصل الأول,First Semester,Erstes Semester
+subject-agronomy,semester-1,علم المحاصيل,Agronomy,Agronomie
+subject-soil,semester-1,علم التربة,Soil Science,Bodenkunde

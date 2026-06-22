@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>مدير المحتوى | eng-alaa.com</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --navy: #003366; --navy-light: #0d4a7a; --green: #1a7a3a;
+      --bg: #eef2f7; --card: #fff; --border: #c8d4e4; --muted: #5a6b7d;
+      --danger: #c0392b; --row-hover: #f5f9ff; --focus: #3b82f6; --ml-bg: #f0f7ff;
+    }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: 'Segoe UI', Tahoma, 'Noto Sans Arabic', system-ui, sans-serif;
+      background: var(--bg); color: #1a2a3a; line-height: 1.5;
+      display: flex; flex-direction: column;
+    }
+    header {
+      background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 100%);
+      color: #fff; padding: 14px 20px; flex-shrink: 0;
+    }
+    header h1 { margin: 0 0 4px; font-size: 1.25rem; font-weight: 800; }
+    header p { margin: 0; font-size: 0.85rem; opacity: 0.88; }
+
+    .toolbar {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+      padding: 12px 16px; background: var(--card);
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .toolbar .spacer { flex: 1; min-width: 8px; }
+    .toolbar label { font-size: 0.82rem; font-weight: 700; color: var(--navy); }
+    .toolbar select {
+      padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
+      font-family: inherit; font-size: 0.82rem;
+    }
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      border: none; border-radius: 8px; padding: 8px 14px;
+      font-weight: 700; font-size: 0.85rem; cursor: pointer; font-family: inherit;
+    }
+    .btn-success { background: var(--green); color: #fff; }
+    .btn-outline { background: #fff; color: var(--navy); border: 2px solid var(--navy); }
+    .btn-danger { background: #fff; color: var(--danger); border: 2px solid var(--danger); }
+    .btn-ghost { background: #e8eef5; color: var(--navy); }
+    input[type=file] { display: none; }
+
+    .tabs {
+      display: flex; gap: 2px; padding: 0 10px; background: var(--card);
+      border-bottom: 1px solid var(--border); flex-shrink: 0; overflow-x: auto;
+    }
+    .tab {
+      padding: 10px 12px; border: none; background: transparent; cursor: pointer;
+      font-weight: 700; font-size: 0.82rem; color: var(--muted);
+      border-bottom: 3px solid transparent; margin-bottom: -1px;
+      font-family: inherit; white-space: nowrap;
+    }
+    .tab.active { color: var(--navy); border-bottom-color: var(--navy); }
+    .tab .badge {
+      display: inline-block; background: #e8eef5; color: var(--navy);
+      font-size: 0.7rem; padding: 1px 6px; border-radius: 10px; margin-right: 4px;
+    }
+    .tab.active .badge { background: var(--navy); color: #fff; }
+    .tab-sep { width: 1px; background: var(--border); margin: 6px 4px; flex-shrink: 0; }
+
+    .hint-bar {
+      padding: 8px 16px; font-size: 0.82rem; color: var(--muted);
+      background: #f8fafc; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .hint-bar strong { color: var(--navy); }
+    .hint-bar kbd {
+      background: #e2e8f0; border-radius: 4px; padding: 1px 6px;
+      font-size: 0.78rem; border: 1px solid #cbd5e1;
+    }
+
+    .grid-wrap { flex: 1; overflow: auto; min-height: 0; }
+    .grid-table {
+      border-collapse: collapse; background: var(--card); font-size: 0.81rem; min-width: 100%;
+    }
+    .grid-table thead th {
+      position: sticky; top: 0; z-index: 2;
+      background: var(--navy); color: #fff; text-align: right;
+      padding: 9px 7px; font-weight: 700; white-space: nowrap;
+      border-left: 1px solid rgba(255,255,255,0.12); min-width: 105px;
+    }
+    .grid-table thead th.col-ml { background: #0a4d8c; }
+    .grid-table thead th:first-child {
+      width: 40px; min-width: 40px; text-align: center; border-left: none;
+      position: sticky; right: 0; z-index: 3;
+    }
+    .grid-table tbody tr { border-bottom: 1px solid #e2e8f0; }
+    .grid-table tbody tr:hover { background: var(--row-hover); }
+    .grid-table tbody tr.selected { background: #dbeafe; }
+    .grid-table td {
+      padding: 0; vertical-align: middle; border-left: 1px solid #e8edf3; min-width: 105px;
+    }
+    .grid-table td:first-child {
+      text-align: center; padding: 4px; color: var(--muted); font-size: 0.75rem;
+      border-left: none; position: sticky; right: 0; background: inherit; z-index: 1;
+    }
+    .grid-table input.cell {
+      width: 100%; border: none; background: transparent;
+      padding: 8px 6px; font-family: inherit; font-size: inherit; min-width: 95px;
+    }
+    .grid-table input.cell.ml { background: var(--ml-bg); }
+    .grid-table input.cell:focus {
+      outline: 2px solid var(--focus); outline-offset: -2px; background: #fff;
+    }
+    .grid-table input.cell.ltr { direction: ltr; text-align: left; }
+
+    .status {
+      padding: 8px 16px; font-size: 0.85rem;
+      border-top: 1px solid var(--border); background: var(--card);
+      flex-shrink: 0; min-height: 36px;
+    }
+    .status.ok { color: var(--green); font-weight: 700; }
+    .status.err { color: var(--danger); font-weight: 700; }
+
+    .panel { display: none; flex-direction: column; flex: 1; min-height: 0; }
+    .panel.active { display: flex; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>مدير المحتوى</h1>
+    <p>هيكل المكتبة · الكتب · المقالات · معرض التصاميم — ثلاث لغات (عربي / English / Deutsch) → data.json</p>
+  </header>
+
+  <div class="toolbar">
+    <button type="button" class="btn btn-outline" id="btnDownloadTemplate">📥 تنزيل قالب Excel</button>
+    <button type="button" class="btn btn-outline" id="btnLoadJson">📂 تحميل data.json</button>
+    <input type="file" id="fileLoadJson" accept=".json,application/json" />
+    <label for="libraryView">عرض المكتبة:</label>
+    <select id="libraryView">
+      <option value="tree">شجرة قابلة للطي</option>
+      <option value="expanded">عرض موسع</option>
+    </select>
+    <button type="button" class="btn btn-ghost" id="btnAddRow">＋ صف</button>
+    <button type="button" class="btn btn-ghost" id="btnAdd10">＋ 10 صفوف</button>
+    <button type="button" class="btn btn-danger" id="btnDeleteRows">🗑 حذف</button>
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-success" id="btnDownload">⬇ توليد وتنزيل JSON</button>
+  </div>
+
+  <div class="tabs" role="tablist" id="tabBar"></div>
+  <div class="hint-bar" id="stepsBar">
+    <strong>الخطوات:</strong>
+    ① تنزيل قالب Excel → ② املأ الأوراق (7 تبويبات) → ③ افتح مدير المحتوى → ④ الصق كل ورقة في التبويب المطابق (<kbd>Ctrl+V</kbd> بدون صف العناوين) →
+    ⑤ <strong>توليد وتنزيل JSON</strong> → ⑥ ارفع <code>data.json</code> إلى <code>public_html</code> عبر SFTP
+  </div>
+  <div class="hint-bar" id="hintBar"></div>
+  <div id="panelsRoot"></div>
+  <div class="status" id="status"></div>
+
+  <script>
+(function () {
+  'use strict';
+
+  const SCHEMA = {
+    libTree: {
+      icon: '🌳', label: 'هيكل المكتبة', countId: 'countLibTree', group: 'library',
+      hint: 'كل صف = عقدة في الشجرة. «معرّف الأب» فارغ = جذر. الترتيب: مكتبة → فرع → سنة → فصل → مادة',
+      columns: [
+        { key: 'id',        label: 'المعرّف (ID)',          ltr: true },
+        { key: 'parentId',  label: 'معرّف العقدة الأب',     ltr: true },
+        { key: 'name_ar',   label: 'الاسم (عربي)',          ml: true },
+        { key: 'name_en',   label: 'الاسم (إنجليزي)',       ml: true },
+        { key: 'name_de',   label: 'الاسم (ألماني)',        ml: true },
+      ],
+    },
+    books: {
+      icon: '📚', label: 'الكتب', countId: 'countBooks', group: 'library',
+      hint: '«معرّف العقدة» = nodeId من تبويب هيكل المكتبة (عقدة المادة). النوع: theory | practical | both',
+      columns: [
+        { key: 'id',          label: 'المعرّف (ID)',              ltr: true },
+        { key: 'nodeId',      label: 'معرّف العقدة (nodeId)',     ltr: true },
+        { key: 'title_ar',    label: 'عنوان الكتاب (عربي)',      ml: true },
+        { key: 'title_en',    label: 'عنوان الكتاب (إنجليزي)',   ml: true },
+        { key: 'title_de',    label: 'عنوان الكتاب (ألماني)',    ml: true },
+        { key: 'author_ar',   label: 'المؤلف (عربي)',            ml: true },
+        { key: 'author_en',   label: 'المؤلف (إنجليزي)',         ml: true },
+        { key: 'author_de',   label: 'المؤلف (ألماني)',          ml: true },
+        { key: 'driveUrl',    label: 'رابط التحميل (Drive)',     ltr: true },
+        { key: 'previewUrl',  label: 'رابط المعاينة (/preview)', ltr: true },
+        { key: 'thumbnail',   label: 'صورة الغلاف',              ltr: true },
+        { key: 'isPaid',      label: 'مدفوع (1/0)',              ltr: true },
+        { key: 'price',       label: 'السعر',                    ltr: true },
+        { key: 'currency',    label: 'العملة (USD…)',            ltr: true },
+        { key: 'pages',       label: 'عدد الصفحات',              ltr: true },
+        { key: 'kind',        label: 'النوع (theory/practical/both)', ltr: true },
+        { key: 'languages',   label: 'لغات الظهور (ar,en,de)',   ltr: true },
+      ],
+    },
+    artCats: {
+      icon: '🏷', label: 'تصنيفات المقالات', countId: 'countArtCats', group: 'articles',
+      hint: 'تصنيفات المقالات — AR · EN · DE',
+      columns: [
+        { key: 'id',      label: 'معرّف التصنيف',     ltr: true },
+        { key: 'name_ar', label: 'اسم التصنيف (عربي)', ml: true },
+        { key: 'name_en', label: 'اسم التصنيف (EN)',   ml: true },
+        { key: 'name_de', label: 'اسم التصنيف (DE)',   ml: true },
+      ],
+    },
+    articles: {
+      icon: '📰', label: 'المقالات', countId: 'countArticles', group: 'articles',
+      hint: 'categoryId من تبويب التصنيفات. المحتوى يدعم HTML. الصور: روابط منفصلة',
+      columns: [
+        { key: 'id',           label: 'المعرّف (ID)',           ltr: true },
+        { key: 'categoryId',   label: 'معرّف التصنيف',          ltr: true },
+        { key: 'title_ar',     label: 'العنوان (عربي)',         ml: true },
+        { key: 'title_en',     label: 'العنوان (إنجليزي)',      ml: true },
+        { key: 'title_de',     label: 'العنوان (ألماني)',       ml: true },
+        { key: 'content_ar',   label: 'المحتوى (عربي)',         ml: true },
+        { key: 'content_en',   label: 'المحتوى (إنجليزي)',      ml: true },
+        { key: 'content_de',   label: 'المحتوى (ألماني)',       ml: true },
+        { key: 'reference_ar', label: 'المرجع (عربي)',          ml: true },
+        { key: 'reference_en', label: 'المرجع (إنجليزي)',       ml: true },
+        { key: 'reference_de', label: 'المرجع (ألماني)',        ml: true },
+        { key: 'date',         label: 'التاريخ',                ltr: true },
+        { key: 'image1',       label: 'رابط صورة 1',            ltr: true },
+        { key: 'image2',       label: 'رابط صورة 2',            ltr: true },
+        { key: 'image3',       label: 'رابط صورة 3',            ltr: true },
+      ],
+    },
+    gfxCats: {
+      icon: '📁', label: 'تصنيفات التصاميم', countId: 'countGfxCats', group: 'designs',
+      hint: 'التصنيفات الرئيسية لمعرض التصاميم — مثل: الهوية والمطبوعات',
+      columns: [
+        { key: 'id',      label: 'معرّف التصنيف',        ltr: true },
+        { key: 'name_ar', label: 'اسم التصنيف (عربي)',  ml: true },
+        { key: 'name_en', label: 'اسم التصنيف (EN)',    ml: true },
+        { key: 'name_de', label: 'اسم التصنيف (DE)',    ml: true },
+        { key: 'icon',    label: 'أيقونة FontAwesome',  ltr: true },
+      ],
+    },
+    gfxSubs: {
+      icon: '📂', label: 'فرعية التصاميم', countId: 'countGfxSubs', group: 'designs',
+      hint: 'التصنيفات الفرعية — cat_id = معرّف التصنيف الرئيسي',
+      columns: [
+        { key: 'id',      label: 'معرّف الفرعي',           ltr: true },
+        { key: 'cat_id',  label: 'معرّف التصنيف الرئيسي',   ltr: true },
+        { key: 'name_ar', label: 'اسم الفرعي (عربي)',      ml: true },
+        { key: 'name_en', label: 'اسم الفرعي (EN)',        ml: true },
+        { key: 'name_de', label: 'اسم الفرعي (DE)',        ml: true },
+      ],
+    },
+    gfxProjects: {
+      icon: '🎨', label: 'مشاريع التصاميم', countId: 'countGfxProjects', group: 'designs',
+      hint: 'sub_id = معرّف الفرعي. الصور الإضافية مفصولة بـ |',
+      columns: [
+        { key: 'id',            label: 'معرّف المشروع',         ltr: true },
+        { key: 'sub_id',        label: 'معرّف التصنيف الفرعي',  ltr: true },
+        { key: 'title_ar',      label: 'العنوان (عربي)',        ml: true },
+        { key: 'title_en',      label: 'العنوان (EN)',          ml: true },
+        { key: 'title_de',      label: 'العنوان (DE)',          ml: true },
+        { key: 'desc_ar',       label: 'الوصف (عربي)',          ml: true },
+        { key: 'desc_en',       label: 'الوصف (EN)',            ml: true },
+        { key: 'desc_de',       label: 'الوصف (DE)',            ml: true },
+        { key: 'mainImg',       label: 'الصورة الرئيسية',       ltr: true },
+        { key: 'mainImgNoWm',   label: 'بدون علامة مائية (1/0)', ltr: true },
+        { key: 'images',        label: 'صور إضافية (|)',        ltr: true },
+        { key: 'videoUrl',      label: 'رابط الفيديو',          ltr: true },
+        { key: 'glbUrl',        label: 'رابط GLB',              ltr: true },
+        { key: 'glbFreeUrl',    label: 'GLB مجاني',             ltr: true },
+        { key: 'glbIsPaid',     label: 'GLB مدفوع (1/0)',       ltr: true },
+        { key: 'glbPrice',      label: 'سعر GLB',               ltr: true },
+        { key: 'glbCurrency',   label: 'عملة GLB',              ltr: true },
+        { key: 'usedSkillsIds', label: 'المهارات (ps|ai|cad)',  ltr: true },
+      ],
+    },
+  };
+
+  const TAB_ORDER = ['libTree', 'books', 'artCats', 'articles', 'gfxCats', 'gfxSubs', 'gfxProjects'];
+  let activeTab = 'libTree';
+  let baseData = defaultBaseData();
+  const selectedRows = {};
+  TAB_ORDER.forEach(k => { selectedRows[k] = new Set(); });
+
+  function defaultBaseData() {
+    return {
+      _meta: {
+        version: 1,
+        updated: today(),
+        description: 'مصدر المحتوى الثابت — ارفع إلى public_html/data.json',
+        languages: ['ar', 'en', 'de'],
+        mlFormat: '{ "ar": "...", "en": "...", "de": "..." }',
+        upload: 'SFTP → public_html/data.json — بدون Build',
+      },
+      library: { view: 'tree', tree: [], books: [] },
+      articles: { categories: [], items: [] },
+      designs: { categories: [] },
+    };
+  }
+
+  function today() { return new Date().toISOString().slice(0, 10); }
+
+  function ml(ar, en, de) {
+    const a = (ar || '').trim();
+    const e = (en || '').trim();
+    const d = (de || '').trim();
+    return { ar: a, en: e || a, de: d || e || a };
+  }
+
+  function mlFromRow(r, prefix) {
+    return ml(r[prefix + '_ar'], r[prefix + '_en'], r[prefix + '_de']);
+  }
+
+  function setStatus(msg, ok) {
+    const el = document.getElementById('status');
+    el.textContent = msg || '';
+    el.className = 'status' + (msg ? (ok ? ' ok' : ' err') : '');
+  }
+
+  function keysOf(k) { return SCHEMA[k].columns.map(c => c.key); }
+  function emptyRow(k) { return keysOf(k).map(() => ''); }
+
+  /* ── UI ─────────────────────────────────────────────────── */
+
+  function buildUI() {
+    const tabBar = document.getElementById('tabBar');
+    const root = document.getElementById('panelsRoot');
+    tabBar.innerHTML = '';
+    root.innerHTML = '';
+    let lastGroup = '';
+
+    TAB_ORDER.forEach((gridKey, i) => {
+      const sch = SCHEMA[gridKey];
+      if (sch.group !== lastGroup && i > 0) {
+        const sep = document.createElement('span');
+        sep.className = 'tab-sep';
+        tabBar.appendChild(sep);
+      }
+      lastGroup = sch.group;
+
+      const tab = document.createElement('button');
+      tab.type = 'button';
+      tab.className = 'tab' + (gridKey === activeTab ? ' active' : '');
+      tab.dataset.tab = gridKey;
+      tab.innerHTML = sch.icon + ' ' + sch.label + ' <span class="badge" id="' + sch.countId + '">0</span>';
+      tab.onclick = () => switchTab(gridKey);
+      tabBar.appendChild(tab);
+
+      const panel = document.createElement('div');
+      panel.className = 'panel' + (gridKey === activeTab ? ' active' : '');
+      panel.id = 'panel-' + gridKey;
+      panel.innerHTML =
+        '<div class="grid-wrap"><table class="grid-table" id="grid-' + gridKey + '">' +
+        '<thead><tr><th>#</th>' +
+        sch.columns.map(c => '<th class="' + (c.ml ? 'col-ml' : '') + '">' + c.label + '</th>').join('') +
+        '</tr></thead><tbody></tbody></table></div>';
+      root.appendChild(panel);
+    });
+    updateHint();
+  }
+
+  function switchTab(gridKey) {
+    activeTab = gridKey;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === gridKey));
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + gridKey));
+    updateHint();
+  }
+
+  function updateHint() {
+    document.getElementById('hintBar').innerHTML =
+      '<strong>لصق Excel:</strong> <kbd>Ctrl+V</kbd> في خلية — ' + SCHEMA[activeTab].hint;
+  }
+
+  function getTbody(k) { return document.querySelector('#grid-' + k + ' tbody'); }
+
+  function rowValues(tr) {
+    return Array.from(tr.querySelectorAll('input.cell')).map(i => i.value.trim());
+  }
+
+  function rowObject(k, vals) {
+    const o = {};
+    keysOf(k).forEach((key, i) => { o[key] = (vals[i] || '').trim(); });
+    return o;
+  }
+
+  function isRowEmpty(vals) { return vals.every(v => !v); }
+
+  function renderGrid(k, rows) {
+    getTbody(k).innerHTML = '';
+    selectedRows[k].clear();
+    (rows && rows.length ? rows : [emptyRow(k)]).forEach(v => appendRow(k, v, false));
+    updateCounts();
+  }
+
+  function appendRow(k, vals, focusFirst) {
+    const sch = SCHEMA[k];
+    const tbody = getTbody(k);
+    if (!vals) vals = emptyRow(k);
+    const tr = document.createElement('tr');
+    const tdNum = document.createElement('td');
+    tdNum.textContent = tbody.children.length + 1;
+    tr.appendChild(tdNum);
+    sch.columns.forEach((col, ci) => {
+      const td = document.createElement('td');
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.className = 'cell' + (col.ltr ? ' ltr' : '') + (col.ml ? ' ml' : '');
+      inp.value = vals[ci] || '';
+      inp.dataset.col = ci;
+      td.appendChild(inp);
+      tr.appendChild(td);
+    });
+    tr.addEventListener('click', e => {
+      if (e.target.tagName === 'INPUT') return;
+      const idx = Array.from(tbody.children).indexOf(tr);
+      if (selectedRows[k].has(idx)) { selectedRows[k].delete(idx); tr.classList.remove('selected'); }
+      else { selectedRows[k].add(idx); tr.classList.add('selected'); }
+    });
+    tbody.appendChild(tr);
+    renumber(k);
+    if (focusFirst) tr.querySelector('input.cell').focus();
+    updateCounts();
+    return tr;
+  }
+
+  function renumber(k) {
+    getTbody(k).querySelectorAll('tr').forEach((tr, i) => {
+      tr.querySelector('td:first-child').textContent = i + 1;
+    });
+  }
+
+  function getGridRows(k, skipEmpty) {
+    const rows = [];
+    getTbody(k).querySelectorAll('tr').forEach(tr => {
+      const vals = rowValues(tr);
+      if (skipEmpty && isRowEmpty(vals)) return;
+      rows.push(vals);
+    });
+    return rows;
+  }
+
+  function updateCounts() {
+    TAB_ORDER.forEach(k => {
+      document.getElementById(SCHEMA[k].countId).textContent = getGridRows(k, true).length;
+    });
+  }
+
+  function addRows(n) {
+    for (let i = 0; i < n; i++) appendRow(activeTab, emptyRow(activeTab), i === 0);
+    setStatus('تمت إضافة ' + n + ' صف(وف)', true);
+  }
+
+  /* ── لصق ─────────────────────────────────────────────────── */
+
+  function parseClipboard(text) {
+    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
+    if (!lines.length) return [];
+    const delim = lines[0].includes('\t') ? '\t' : (lines[0].includes(';') ? ';' : ',');
+    const parsed = lines.map(line => splitDelimited(line, delim));
+    if (parsed.length > 1 && looksLikeHeader(parsed[0])) parsed.shift();
+    return parsed;
+  }
+
+  function looksLikeHeader(cells) {
+    const j = cells.join(' ').toLowerCase();
+    return /^(id|المعر|معر|title|عنوان|اسم|parent)/.test(cells[0].trim()) ||
+      j.includes('عربي') || j.includes('ar') || j.includes('drive');
+  }
+
+  function splitDelimited(line, delim) {
+    const out = []; let cur = ''; let q = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { q = !q; continue; }
+      if (c === delim && !q) { out.push(cur); cur = ''; continue; }
+      cur += c;
+    }
+    out.push(cur);
+    return out.map(s => s.trim());
+  }
+
+  document.addEventListener('paste', e => {
+    const inp = e.target;
+    if (!inp.classList || !inp.classList.contains('cell')) return;
+    const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+    if (!text || (!text.includes('\t') && !text.includes('\n'))) return;
+    e.preventDefault();
+    const k = activeTab;
+    const tbody = getTbody(k);
+    const startRow = Array.from(tbody.children).indexOf(inp.closest('tr'));
+    const startCol = parseInt(inp.dataset.col, 10);
+    const matrix = parseClipboard(text);
+    const colCount = SCHEMA[k].columns.length;
+    matrix.forEach((cells, ri) => {
+      let tr = tbody.children[startRow + ri];
+      if (!tr) tr = appendRow(k, emptyRow(k), false);
+      const inputs = tr.querySelectorAll('input.cell');
+      cells.forEach((val, ci) => {
+        const col = startCol + ci;
+        if (col < colCount && inputs[col]) inputs[col].value = val;
+      });
+    });
+    updateCounts();
+    setStatus('تم لصق ' + matrix.length + ' صف(وف)', true);
+  });
+
+  /* ── مساعدات ─────────────────────────────────────────────── */
+
+  function driveFileId(url) {
+    if (!url) return '';
+    const m1 = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (m1) return m1[1];
+    const m2 = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    return m2 ? m2[1] : '';
+  }
+
+  function drivePreview(url) {
+    const id = driveFileId(url);
+    return id ? 'https://drive.google.com/file/d/' + id + '/preview' : '';
+  }
+
+  function driveThumb(url) {
+    const id = driveFileId(url);
+    return id ? 'https://drive.google.com/thumbnail?id=' + id + '&sz=w400' : '';
+  }
+
+  function parseLanguages(raw) {
+    const out = [];
+    (raw || 'ar').toLowerCase().split(/[,|;+\s]+/).filter(Boolean).forEach(p => {
+      if (['ar', 'en', 'de'].includes(p) && !out.includes(p)) out.push(p);
+    });
+    return out.length ? out : ['ar'];
+  }
+
+  function truthy(v) {
+    const s = (v || '').trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'نعم';
+  }
+
+  function slugify(text) {
+    return (text || '').trim().toLowerCase()
+      .replace(/\s+/g, '-').replace(/[^\w\u0600-\u06FF-]/g, '')
+      .replace(/-+/g, '-').replace(/^-|-$/g, '') || 'id-' + Date.now();
+  }
+
+  function splitPipe(s) {
+    return (s || '').split('|').map(x => x.trim()).filter(Boolean);
+  }
+
+  function getMl(obj, field) {
+    if (!obj || !obj[field]) return { ar: '', en: '', de: '' };
+    const v = obj[field];
+    if (typeof v === 'string') return { ar: v, en: v, de: v };
+    return { ar: v.ar || '', en: v.en || '', de: v.de || '' };
+  }
+
+  function hasRows(k) { return getGridRows(k, true).length > 0; }
+
+  /* ── هيكل المكتبة: شجرة ↔ جدول ─────────────────────────── */
+
+  function flattenLibraryTree(nodes, parentId) {
+    const rows = [];
+    (nodes || []).forEach(n => {
+      const nm = getMl(n, 'name');
+      rows.push([n.id || '', parentId || '', nm.ar, nm.en, nm.de]);
+      rows.push(...flattenLibraryTree(n.children, n.id));
+    });
+    return rows;
+  }
+
+  function buildTreeFromGrid() {
+    const items = getGridRows('libTree', true).map(vals => {
+      const r = rowObject('libTree', vals);
+      return {
+        id: r.id || slugify(r.name_ar),
+        parentId: r.parentId || '',
+        name: mlFromRow(r, 'name'),
+        children: [],
+      };
+    });
+    const byId = new Map(items.map(n => [n.id, n]));
+    const roots = [];
+    items.forEach(n => {
+      if (!n.parentId) roots.push(n);
+      else {
+        const p = byId.get(n.parentId);
+        if (p) p.children.push(n);
+        else roots.push(n);
+      }
+    });
+    function strip(n) {
+      return { id: n.id, name: n.name, children: n.children.map(strip) };
+    }
+    return roots.map(strip);
+  }
+
+  /* ── Grid → JSON ─────────────────────────────────────────── */
+
+  function booksFromGrid() {
+    return getGridRows('books', true).map(vals => {
+      const r = rowObject('books', vals);
+      const drive = r.driveUrl;
+      const paid = truthy(r.isPaid) || (!!r.price && r.price !== '0');
+      const kind = ['theory', 'practical', 'both'].includes(r.kind) ? r.kind : 'both';
+      return {
+        id: r.id || 'book-' + slugify(r.title_ar),
+        nodeId: r.nodeId,
+        title: mlFromRow(r, 'title'),
+        author: mlFromRow(r, 'author'),
+        thumbnail: r.thumbnail || driveThumb(drive),
+        driveUrl: drive,
+        previewUrl: r.previewUrl || drivePreview(drive),
+        isPaid: paid,
+        price: r.price || '',
+        currency: (r.currency || 'USD').toUpperCase(),
+        pages: r.pages || '',
+        kind,
+        languages: parseLanguages(r.languages),
+      };
+    });
+  }
+
+  function artCatsFromGrid() {
+    return getGridRows('artCats', true).map(vals => {
+      const r = rowObject('artCats', vals);
+      return { id: r.id || 'cat-' + slugify(r.name_ar), name: mlFromRow(r, 'name') };
+    });
+  }
+
+  function articlesFromGrid() {
+    return getGridRows('articles', true).map(vals => {
+      const r = rowObject('articles', vals);
+      return {
+        id: r.id || 'article-' + slugify(r.title_ar),
+        categoryId: r.categoryId,
+        title: mlFromRow(r, 'title'),
+        content: mlFromRow(r, 'content'),
+        images: [r.image1, r.image2, r.image3].filter(Boolean),
+        reference: mlFromRow(r, 'reference'),
+        date: r.date || today(),
+      };
+    });
+  }
+
+  function designsFromGrids() {
+    const catMap = new Map();
+
+    getGridRows('gfxCats', true).forEach(vals => {
+      const r = rowObject('gfxCats', vals);
+      const id = r.id || slugify(r.name_ar);
+      catMap.set(id, {
+        id, name: mlFromRow(r, 'name'), icon: r.icon || 'fa-palette', subCategories: [],
+      });
+    });
+
+    getGridRows('gfxSubs', true).forEach(vals => {
+      const r = rowObject('gfxSubs', vals);
+      const catId = r.cat_id;
+      const subId = r.id || slugify(r.name_ar);
+      let cat = catMap.get(catId);
+      if (!cat) {
+        cat = { id: catId, name: ml(catId, catId, catId), icon: 'fa-palette', subCategories: [] };
+        catMap.set(catId, cat);
+      }
+      cat.subCategories.push({ id: subId, name: mlFromRow(r, 'name'), items: [], _subId: subId });
+    });
+
+    getGridRows('gfxProjects', true).forEach(vals => {
+      const r = rowObject('gfxProjects', vals);
+      const subId = r.sub_id;
+      let targetSub = null;
+      catMap.forEach(cat => {
+        cat.subCategories.forEach(sub => {
+          if (sub.id === subId || sub._subId === subId) targetSub = sub;
+        });
+      });
+      if (!targetSub) {
+        let cat = catMap.values().next().value;
+        if (!cat) {
+          cat = { id: 'gfx-general', name: ml('عام', 'General', 'Allgemein'), icon: 'fa-palette', subCategories: [] };
+          catMap.set(cat.id, cat);
+        }
+        targetSub = { id: subId || 'sub-general', name: ml('مشاريع', 'Projects', 'Projekte'), items: [] };
+        cat.subCategories.push(targetSub);
+      }
+      const extra = splitPipe(r.images);
+      const mainImg = r.mainImg || '';
+      const images = mainImg ? [mainImg, ...extra.filter(u => u !== mainImg)] : extra;
+      targetSub.items.push({
+        id: r.id || 'design-' + slugify(r.title_ar),
+        title: mlFromRow(r, 'title'),
+        desc: mlFromRow(r, 'desc'),
+        mainImg,
+        mainImgNoWm: truthy(r.mainImgNoWm),
+        images: images.length ? images : (mainImg ? [mainImg] : []),
+        imagesNoWm: [],
+        videoUrl: r.videoUrl || '',
+        glbUrl: r.glbUrl || '',
+        glbFreeUrl: r.glbFreeUrl || r.glbUrl || '',
+        glbIsPaid: truthy(r.glbIsPaid),
+        glbPrice: r.glbPrice || '',
+        glbCurrency: (r.glbCurrency || 'USD').toUpperCase(),
+        usedSkillsIds: splitPipe((r.usedSkillsIds || '').replace(/,/g, '|')),
+        cvSettings: { isFeatured: true, imgSize: 100, showDesc: true, showTools: true },
+      });
+    });
+
+    return [...catMap.values()].map(cat => ({
+      id: cat.id,
+      name: cat.name,
+      icon: cat.icon,
+      subCategories: cat.subCategories.map(sub => ({
+        id: sub.id,
+        name: sub.name,
+        items: sub.items,
+      })),
+    }));
+  }
+
+  function buildOutputJson() {
+    const libView = document.getElementById('libraryView').value;
+    const tree = hasRows('libTree') ? buildTreeFromGrid() : (baseData.library.tree || []);
+    const books = hasRows('books') ? booksFromGrid() : (baseData.library.books || []);
+    const artCats = hasRows('artCats') ? artCatsFromGrid() : (baseData.articles.categories || []);
+    const arts = hasRows('articles') ? articlesFromGrid() : (baseData.articles.items || []);
+    const hasDesignData = hasRows('gfxCats') || hasRows('gfxSubs') || hasRows('gfxProjects');
+    const designs = hasDesignData ? designsFromGrids() : (baseData.designs.categories || []);
+
+    return {
+      _meta: { ...baseData._meta, updated: today() },
+      library: { view: libView, tree, books },
+      articles: { categories: artCats, items: arts },
+      designs: { categories: designs },
+    };
+  }
+
+  /* ── JSON → Grid ─────────────────────────────────────────── */
+
+  function bookToRow(b) {
+    const t = getMl(b, 'title');
+    const a = getMl(b, 'author');
+    const langs = Array.isArray(b.languages) ? b.languages.join(', ') : '';
+    return [
+      b.id || '', b.nodeId || '',
+      t.ar, t.en, t.de, a.ar, a.en, a.de,
+      b.driveUrl || '', b.previewUrl || '', b.thumbnail || '',
+      b.isPaid ? '1' : '0', b.price || '', b.currency || 'USD',
+      b.pages || '', b.kind || 'both', langs,
+    ];
+  }
+
+  function artCatToRow(c) {
+    const n = getMl(c, 'name');
+    return [c.id || '', n.ar, n.en, n.de];
+  }
+
+  function articleToRow(a) {
+    const t = getMl(a, 'title');
+    const c = getMl(a, 'content');
+    const ref = getMl(a, 'reference');
+    const imgs = a.images || [];
+    return [
+      a.id || '', a.categoryId || '',
+      t.ar, t.en, t.de, c.ar, c.en, c.de,
+      ref.ar, ref.en, ref.de,
+      a.date || '', imgs[0] || '', imgs[1] || '', imgs[2] || '',
+    ];
+  }
+
+  function gfxCatToRow(cat) {
+    const n = getMl(cat, 'name');
+    return [cat.id || '', n.ar, n.en, n.de, cat.icon || 'fa-palette'];
+  }
+
+  function gfxSubToRow(sub, catId) {
+    const n = getMl(sub, 'name');
+    return [sub.id || '', catId || '', n.ar, n.en, n.de];
+  }
+
+  function gfxProjectToRow(item, subId) {
+    const t = getMl(item, 'title');
+    const d = getMl(item, 'desc');
+    const imgs = (item.images || []).filter(u => u && u !== item.mainImg);
+    return [
+      item.id || '', subId || '',
+      t.ar, t.en, t.de, d.ar, d.en, d.de,
+      item.mainImg || '', item.mainImgNoWm ? '1' : '0', imgs.join('|'),
+      item.videoUrl || '', item.glbUrl || '', item.glbFreeUrl || '',
+      item.glbIsPaid ? '1' : '0', item.glbPrice || '', item.glbCurrency || 'USD',
+      (item.usedSkillsIds || []).join('|'),
+    ];
+  }
+
+  function loadFromJson(data) {
+    baseData = defaultBaseData();
+    if (data._meta) baseData._meta = { ...baseData._meta, ...data._meta };
+    if (data.library) {
+      baseData.library = {
+        view: data.library.view || 'tree',
+        tree: data.library.tree || [],
+        books: data.library.books || [],
+      };
+    }
+    if (data.articles) {
+      baseData.articles = {
+        categories: data.articles.categories || [],
+        items: data.articles.items || [],
+      };
+    }
+    if (data.designs) baseData.designs = { categories: data.designs.categories || [] };
+
+    document.getElementById('libraryView').value =
+      baseData.library.view === 'expanded' ? 'expanded' : 'tree';
+
+    const treeRows = flattenLibraryTree(baseData.library.tree, '');
+    renderGrid('libTree', treeRows.length ? treeRows : null);
+
+    const bookRows = (baseData.library.books || []).map(bookToRow);
+    renderGrid('books', bookRows.length ? bookRows : null);
+
+    const catRows = (baseData.articles.categories || []).map(artCatToRow);
+    renderGrid('artCats', catRows.length ? catRows : null);
+
+    const artRows = (baseData.articles.items || []).map(articleToRow);
+    renderGrid('articles', artRows.length ? artRows : null);
+
+    const gfxCatRows = (baseData.designs.categories || []).map(gfxCatToRow);
+    renderGrid('gfxCats', gfxCatRows.length ? gfxCatRows : null);
+
+    const gfxSubRows = [];
+    (baseData.designs.categories || []).forEach(cat => {
+      (cat.subCategories || []).forEach(sub => gfxSubRows.push(gfxSubToRow(sub, cat.id)));
+    });
+    renderGrid('gfxSubs', gfxSubRows.length ? gfxSubRows : null);
+
+    const gfxProjRows = [];
+    (baseData.designs.categories || []).forEach(cat => {
+      (cat.subCategories || []).forEach(sub => {
+        (sub.items || []).forEach(item => gfxProjRows.push(gfxProjectToRow(item, sub.id)));
+      });
+    });
+    renderGrid('gfxProjects', gfxProjRows.length ? gfxProjRows : null);
+
+    setStatus(
+      'تم التحميل — ' + treeRows.length + ' عقدة، ' + bookRows.length + ' كتاب، ' +
+      catRows.length + ' تصنيف مقالات، ' + artRows.length + ' مقالة، ' +
+      gfxProjRows.length + ' مشروع تصميم',
+      true
+    );
+  }
+
+  /* ── أحداث ───────────────────────────────────────────────── */
+
+  document.getElementById('btnDownloadTemplate').onclick = () => {
+    const a = document.createElement('a');
+    a.href = 'content-manager-templates/content-manager-template.xlsx';
+    a.download = 'content-manager-template.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setStatus('تم طلب تنزيل content-manager-template.xlsx — إن لم يعمل، افتح المجلد: public/content-manager-templates/', true);
+  };
+
+  document.getElementById('btnLoadJson').onclick = () => document.getElementById('fileLoadJson').click();
+  document.getElementById('fileLoadJson').onchange = e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try { loadFromJson(JSON.parse(r.result)); }
+      catch (err) { setStatus('JSON غير صالح: ' + err.message, false); }
+    };
+    r.readAsText(f, 'UTF-8');
+    e.target.value = '';
+  };
+
+  document.getElementById('btnAddRow').onclick = () => addRows(1);
+  document.getElementById('btnAdd10').onclick = () => addRows(10);
+
+  document.getElementById('btnDeleteRows').onclick = () => {
+    const k = activeTab;
+    const tbody = getTbody(k);
+    const indices = [...selectedRows[k]].sort((a, b) => b - a);
+    if (!indices.length) {
+      const rows = tbody.querySelectorAll('tr');
+      if (rows.length > 1) rows[rows.length - 1].remove();
+      else rows[0].querySelectorAll('input').forEach(i => { i.value = ''; });
+    } else {
+      indices.forEach(i => { if (tbody.children[i]) tbody.removeChild(tbody.children[i]); });
+      selectedRows[k].clear();
+    }
+    if (!tbody.children.length) appendRow(k, emptyRow(k), false);
+    renumber(k);
+    updateCounts();
+    setStatus('تم الحذف', true);
+  };
+
+  document.getElementById('btnDownload').onclick = () => {
+    const out = buildOutputJson();
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'data.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    let nodes = 0;
+    (function count(ns) { (ns || []).forEach(n => { nodes++; count(n.children); }); })(out.library.tree);
+    setStatus(
+      '✓ data.json — ' + nodes + ' عقدة مكتبة، ' + out.library.books.length + ' كتاب، ' +
+      out.articles.items.length + ' مقالة، ' + out.designs.categories.length + ' تصنيف تصاميم',
+      true
+    );
+  };
+
+  buildUI();
+  TAB_ORDER.forEach(k => renderGrid(k));
+  setStatus('مدير المحتوى جاهز — حمّل data.json أو ابدأ من Excel', true);
+})();
+  </script>
+</body>
+</html>
