@@ -8,6 +8,7 @@ import {
   flattenCvSheetShift,
   applyQrLayoutForCapture,
   hideFlowBlocksOutsideWindow,
+  lockCvExportDimensions,
   lockSheetClipForCapture,
   mountExportCaptureShell,
   prepareSheetForCapture,
@@ -20,11 +21,11 @@ const PAGE_W_MM = 210;
 const PAGE_H_MM = 297;
 
 type SkillLayoutVars = {
-  headerBarGap: string;   /* gap between name-line and bar-track (flex-column gap) */
+  headerBarGap: string;   /* gap between name-line and bar-track */
   rowGap: string;         /* margin-bottom between skill rows */
   nameLineHeight: string; /* min-height of name line */
   iconSize: string;       /* --cv-skill-icon-size */
-  iconNameGap: string;    /* gap between name text and icon inside chip */
+  iconNameGap: string;    /* gap between name text and icon */
 };
 
 export type CvPdfLink = {
@@ -59,7 +60,7 @@ function readSkillLayoutVars(sheet: HTMLElement): SkillLayoutVars {
   return {
     headerBarGap: cs.getPropertyValue('--cv-skill-header-bar-gap').trim() || '10px',
     rowGap: cs.getPropertyValue('--cv-skill-row-gap').trim() || '10px',
-    nameLineHeight: cs.getPropertyValue('--cv-skill-name-line-height').trim() || '16px',
+    nameLineHeight: cs.getPropertyValue('--cv-skill-name-line-height').trim() || '14px',
     iconSize: cs.getPropertyValue('--cv-skill-icon-size').trim() || '14px',
     iconNameGap: cs.getPropertyValue('--cv-skill-icon-name-gap').trim() || '6px',
   };
@@ -90,23 +91,32 @@ function lockSheetSize(sheet: HTMLElement, widthPx: number, heightPx: number): v
 }
 
 /**
- * إصلاح تخطيط المهارات لـ html2canvas:
+ * إصلاح تخطيط المهارات لـ html2canvas.
  *
- * html2canvas 1.4.1 يتجاهل `gap` على flex وgrid.
- * الحل: نُبقي flex-column على .cv-skill-bar-row (لا نغيّر display)
- * ونستبدل gap بـ margin-bottom صريحة على العناصر الأبناء.
- * كذلك نستبدل gap داخل .cv-skill-bar-name-chip بـ margin على النص.
+ * مشكلتان معروفتان في html2canvas 1.4.1:
+ *   1. يتجاهل `gap` على flex وgrid.
+ *   2. قد لا يُطبّق `align-items:center` بشكل صحيح على inline-flex.
+ *
+ * الحل للمحاذاة العمودية (اسم البرنامج والأيقونة):
+ *   نحوّل .cv-skill-bar-name-chip إلى inline-table.
+ *   الخلايا table-cell + vertical-align:middle مضمونة في html2canvas.
+ *
+ * الحل لـ gap:
+ *   نُبقي flex-column على .cv-skill-bar-row ونستبدل gap بـ margin صريحة.
  */
 function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): void {
-  /* ─── Row: احتفظ بـ flex-column، فقط اقتل gap واستبدله بـ margin على السطر ─── */
+  const iconPx = vars.iconSize || '14px';
+  const iconSizeNum = parseFloat(iconPx) || 14;
+
+  /* ─── Row: احتفظ بـ flex-column، استبدل gap بـ margin على السطر ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-row').forEach(row => {
     row.style.setProperty('display', 'flex', 'important');
     row.style.setProperty('flex-direction', 'column', 'important');
-    row.style.setProperty('gap', '0', 'important');           /* html2canvas يتجاهل gap */
+    row.style.setProperty('gap', '0', 'important');
     row.style.setProperty('margin-bottom', vars.rowGap, 'important');
   });
 
-  /* ─── السطر (اسم + نسبة): flex-row، استبدل gap الصف بـ margin-bottom على هذا السطر ─── */
+  /* ─── سطر الاسم: flex-row، margin-bottom يستبدل gap العمودي ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-line, .cv-skill-bar-header').forEach(line => {
     line.style.setProperty('display', 'flex', 'important');
     line.style.setProperty('flex-direction', 'row', 'important');
@@ -115,44 +125,57 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
     line.style.setProperty('width', '100%', 'important');
     line.style.setProperty('min-height', vars.nameLineHeight, 'important');
     line.style.setProperty('gap', '0', 'important');
-    /*
-     * هذا هو المسافة بين سطر الاسم وشريط المهارة.
-     * في CSS العادي كانت gap على .cv-skill-bar-row = --cv-skill-header-bar-gap.
-     * نضعها هنا كـ margin-bottom على السطر.
-     */
     line.style.setProperty('margin-bottom', vars.headerBarGap, 'important');
     line.style.setProperty('padding-bottom', '0', 'important');
   });
 
-  /* ─── Chip (اسم + أيقونة): inline-flex + vertical-align:middle للـ chip نفسه ─── */
-  root.querySelectorAll<HTMLElement>('.cv-skill-bar-name-chip, .cv-skill-bar-name').forEach(chip => {
-    chip.style.setProperty('display', 'inline-flex', 'important');
-    chip.style.setProperty('flex-direction', 'row', 'important');
-    chip.style.setProperty('align-items', 'center', 'important');
-    chip.style.setProperty('direction', 'ltr', 'important');
-    chip.style.setProperty('gap', '0', 'important');
-    /*
-     * html2canvas أحياناً يعالج inline-flex كـ inline عادي.
-     * vertical-align:middle يضمن أن الـ chip نفسه يتمحور مع سطر الـ pct.
-     */
-    chip.style.setProperty('vertical-align', 'middle', 'important');
-  });
-
   /*
-   * بديل gap داخل chip: margin-inline-end على النص.
+   * ─── Chip: inline-table بدل inline-flex ───────────────────────────
    *
-   * السبب الجذري لنزول الاسم: الأيقونة لها vertical-align:middle أما النص
-   * له vertical-align:baseline (الافتراضي). baseline أسفل من middle خطّ x،
-   * فيظهر النص أنزل من الأيقونة. الحل: نضع vertical-align:middle على النص
-   * و display:inline-block (شرط تفعيل vertical-align على عنصر span).
+   * السبب الجذري للمشكلة:
+   *   html2canvas قد يُعالج inline-flex كـ inline عادي.
+   *   في هذه الحالة الأيقونة لها vertical-align:middle (من CSS) والنص
+   *   له vertical-align:baseline → يظهر النص أسفل من الأيقونة.
+   *
+   * الحل: inline-table + table-cell + vertical-align:middle.
+   *   html2canvas يدعم table layout بشكل كامل وموثوق.
+   *   الخلايا في نفس الصف لها نفس الارتفاع تلقائياً وتتمحور عمودياً.
    */
-  root.querySelectorAll<HTMLElement>('.cv-skill-bar-name-text').forEach(txt => {
-    txt.style.setProperty('display', 'inline-block', 'important');
-    txt.style.setProperty('vertical-align', 'middle', 'important');
-    txt.style.setProperty('margin-inline-end', vars.iconNameGap, 'important');
+  root.querySelectorAll<HTMLElement>('.cv-skill-bar-name-chip, .cv-skill-bar-name').forEach(chip => {
+    chip.style.setProperty('display', 'inline-table', 'important');
+    chip.style.setProperty('direction', 'ltr', 'important');
+    chip.style.setProperty('vertical-align', 'middle', 'important');
+    chip.style.setProperty('white-space', 'nowrap', 'important');
+    chip.style.setProperty('border-spacing', '0', 'important');
+    chip.style.setProperty('border-collapse', 'separate', 'important');
+    chip.style.setProperty('gap', '0', 'important');
+
+    /* النص: خلية table-cell → محاذاة عمودية مضمونة */
+    chip.querySelectorAll<HTMLElement>('.cv-skill-bar-name-text').forEach(txt => {
+      txt.style.setProperty('display', 'table-cell', 'important');
+      txt.style.setProperty('vertical-align', 'middle', 'important');
+      txt.style.setProperty('padding-right', vars.iconNameGap, 'important');
+      txt.style.setProperty('padding-left', '0', 'important');
+      txt.style.setProperty('white-space', 'nowrap', 'important');
+      txt.style.setProperty('line-height', `${iconSizeNum}px`, 'important');
+    });
+
+    /* الأيقونة: خلية table-cell → محاذاة عمودية مضمونة */
+    chip.querySelectorAll<HTMLElement>('.cv-skill-icon').forEach(icon => {
+      icon.style.setProperty('display', 'table-cell', 'important');
+      icon.style.setProperty('vertical-align', 'middle', 'important');
+      icon.style.setProperty('width', iconPx, 'important');
+      icon.style.setProperty('height', iconPx, 'important');
+      icon.style.setProperty('max-width', iconPx, 'important');
+      icon.style.setProperty('min-width', iconPx, 'important');
+      icon.style.setProperty('max-height', iconPx, 'important');
+      icon.style.setProperty('min-height', iconPx, 'important');
+      icon.style.setProperty('object-fit', 'contain', 'important');
+      icon.style.setProperty('line-height', `${iconSizeNum}px`, 'important');
+    });
   });
 
-  /* ─── الشريط: block صريح لضمان القصّ الكامل ─── */
+  /* ─── الشريط: block صريح ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-track').forEach(track => {
     track.style.setProperty('display', 'block', 'important');
     track.style.setProperty('width', '100%', 'important');
@@ -160,9 +183,9 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
     track.style.setProperty('clear', 'both', 'important');
   });
 
-  /* ─── الأيقونات: ثبّت الحجم + vertical-align متوافق مع النص ─── */
-  const iconPx = vars.iconSize || '14px';
+  /* ─── الأيقونات خارج الـ chip (نادرة): ثبّت الحجم ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-icon').forEach(icon => {
+    /* لا نُعيد تحديد display هنا — ضُبطت بالفعل من خلال chip.querySelectorAll أعلاه */
     icon.style.setProperty('width', iconPx, 'important');
     icon.style.setProperty('height', iconPx, 'important');
     icon.style.setProperty('max-width', 'none', 'important');
@@ -170,15 +193,12 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
     icon.style.setProperty('min-width', iconPx, 'important');
     icon.style.setProperty('min-height', iconPx, 'important');
     icon.style.setProperty('flex-shrink', '0', 'important');
-    icon.style.setProperty('display', 'inline-block', 'important');
-    icon.style.setProperty('vertical-align', 'middle', 'important');
     icon.style.setProperty('object-fit', 'contain', 'important');
   });
 }
 
 /**
  * حاوية التقاط مخفية تماماً — position:fixed left:-12000px
- * left:0 كان يسبّب مشاكل على الجوال (إعادة تدفق + قصّ 794px).
  */
 function buildCaptureViewport(widthPx: number, heightPx: number): HTMLDivElement {
   const viewport = mountExportCaptureShell(widthPx, heightPx);
@@ -193,6 +213,15 @@ function buildCaptureViewport(widthPx: number, heightPx: number): HTMLDivElement
   return viewport;
 }
 
+/**
+ * خيارات html2canvas.
+ *
+ * windowWidth:1920 / windowHeight:1080 → يجبر html2canvas على تقييم
+ * media queries كـ "desktop"، مما يمنع انهيار العمودين على الجوال.
+ *
+ * onclone: نُطبّق هنا إصلاحات التخطيط على المستند المستنسخ داخلياً،
+ * ونجبر التخطيط ثنائي العمود حتى على الجوال.
+ */
 function html2canvasOptions(
   scale: number,
   widthPx: number,
@@ -211,6 +240,13 @@ function html2canvasOptions(
     logging: false,
     foreignObjectRendering: false,
     removeContainer: true,
+    /*
+     * windowWidth/windowHeight: يُعلم html2canvas بأن viewport المرجعي هو 1920×1080
+     * لتقييم media queries. هذا يمنع تطبيق CSS الجوال (breakpoints < 768px)
+     * على المستند المستنسخ حتى عند التصدير من هاتف.
+     */
+    windowWidth: 1920,
+    windowHeight: 1080,
     ignoreElements: (el: Element) => {
       const tag = el.tagName;
       return tag === 'IFRAME' || tag === 'VIDEO' || tag === 'OBJECT' || tag === 'EMBED';
@@ -224,10 +260,20 @@ function html2canvasOptions(
           img.style.visibility = 'hidden';
         }
       });
+
       /*
-       * يجب تطبيق إصلاح المهارات والـ QR على المستند المستنسخ أيضاً.
-       * onclone يستلم document كامل — لا يرث فئات الحاوية (.cv-export-offscreen)،
-       * لذا تُطبَّق قاعدة img{max-width:100%!important} من media-query الجوال.
+       * جبر التخطيط ثنائي العمود على الجوال:
+       * media queries تُطبَّق بناءً على viewport الحقيقي، لذا نستخدم
+       * inline styles (تتغلب على أي !important في CSS) لإجبار 1fr/2fr.
+       */
+      doc.querySelectorAll<HTMLElement>('.cv-two-col').forEach(col => {
+        col.style.setProperty('display', 'grid', 'important');
+        col.style.setProperty('grid-template-columns', '1fr 2fr', 'important');
+      });
+
+      /*
+       * يُطبّق إصلاحات المهارات والـ QR على المستند المستنسخ داخلياً.
+       * onclone يستلم document كامل — يجب إعادة التطبيق هنا أيضاً.
        */
       applySkillLayoutForCapture(doc, skillVars);
       applyQrLayoutForCapture(doc);
@@ -315,19 +361,24 @@ async function captureSheet(liveSheet: HTMLElement, pageIndex: number, pageTotal
     await waitForImages(clone);
 
     lockSheetSize(clone, widthPx, heightPx);
+
+    /*
+     * جبر التخطيط ثنائي العمود على الـ clone قبل باقي الإصلاحات.
+     * هذا يعالج مشكلة الجوال: media queries تنهار العمودين لعمود واحد.
+     */
+    lockCvExportDimensions(clone, widthPx, heightPx);
+    clone.querySelectorAll<HTMLElement>('.cv-two-col').forEach(col => {
+      col.style.setProperty('display', 'grid', 'important');
+      col.style.setProperty('grid-template-columns', '1fr 2fr', 'important');
+    });
+
     reflowCvSheetFooterForCapture(clone);
     applySkillLayoutForCapture(clone, skillVars);
     applyQrLayoutForCapture(clone);
     prepareSheetForCapture(clone);
     restoreClip = lockSheetClipForCapture(clone);
 
-    /*
-     * فرض إعادة حساب التخطيط قبل قياس offsetTop في hideFlowBlocksOutsideWindow.
-     * بدون هذا، التعديلات السابقة (lockSheetSize، reflowFooter…) لم يُطبّقها المتصفح بعد
-     * فتأتي قيم offsetTop خاطئة وتُخفى كتل مرئية أو تُظهر كتل خارج النافذة.
-     */
     void clone.offsetHeight;
-
     restoreHidden = hideFlowBlocksOutsideWindow(clone);
 
     await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));

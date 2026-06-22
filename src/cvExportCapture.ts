@@ -308,14 +308,13 @@ export function reflowCvSheetFooterForCapture(sheet: HTMLElement): void {
     colorBar.style.setProperty('margin-bottom', '5px', 'important');
   });
 
-  /* اقرأ أبعاد الإطار والترويسة والتذييل بعد إجبار إعادة الحساب */
+  /* اضبط ارتفاع نافذة المحتوى من budget أو قياس مباشر */
   void sheet.offsetHeight;
 
-  const frameInnerH = frame.clientHeight; /* ارتفاع الإطار بعد padding الورقة */
+  const frameInnerH = frame.clientHeight;
   const headerH = headerWrap?.offsetHeight ?? 0;
   const footerH = footerWrap.offsetHeight;
 
-  /* احسب bodyH من data-cv-body-budget أو من القياس */
   const budgetAttr = bodyWin.getAttribute('data-cv-body-budget');
   const budgetFromAttr = budgetAttr ? Number.parseFloat(budgetAttr) : NaN;
   let bodyH = Number.isFinite(budgetFromAttr) && budgetFromAttr > 0
@@ -325,7 +324,6 @@ export function reflowCvSheetFooterForCapture(sheet: HTMLElement): void {
     bodyH = Math.max(80, frameInnerH - headerH - footerH);
   }
 
-  /* اضبط ارتفاع نافذة المحتوى */
   bodyWin.style.setProperty('flex-shrink', '0', 'important');
   bodyWin.style.setProperty('height', `${bodyH}px`, 'important');
   bodyWin.style.setProperty('max-height', `${bodyH}px`, 'important');
@@ -333,12 +331,25 @@ export function reflowCvSheetFooterForCapture(sheet: HTMLElement): void {
   bodyWin.style.setProperty('position', 'relative', 'important');
 
   /*
-   * احسب المسافة المتبقية بين نهاية المحتوى ورأس التذييل.
-   * هذا يحلّ محلّ margin-top:auto الذي لا يدعمه html2canvas.
-   * المعادلة: gap = frame_inner_height - header - body - footer
+   * تثبيت التذييل في الأسفل بـ position:absolute بدل حساب margin-top.
+   *
+   * المشكلة السابقة: حساب gap = frameInnerH - header - body - footer
+   *   كان قد يُخطئ بسبب اختلاف clientHeight قبل/بعد reflow،
+   *   فيُدفع التذييل خارج حدود الـ overflow:hidden ويختفي.
+   *
+   * الحل: position:absolute + bottom:0 داخل frame (position:relative).
+   *   التذييل يلصق بالأسفل دائماً بصرف النظر عن ارتفاع المحتوى.
    */
-  const gap = Math.max(0, frameInnerH - headerH - bodyH - footerH);
-  footerWrap.style.setProperty('margin-top', `${gap}px`, 'important');
+  frame.style.setProperty('position', 'relative', 'important');
+  footerWrap.style.setProperty('position', 'absolute', 'important');
+  footerWrap.style.setProperty('bottom', '0', 'important');
+  footerWrap.style.setProperty('left', '0', 'important');
+  footerWrap.style.setProperty('right', '0', 'important');
+  footerWrap.style.setProperty('width', '100%', 'important');
+  footerWrap.style.setProperty('margin-top', '0', 'important');
+  footerWrap.style.setProperty('z-index', '2', 'important');
+  footer.style.setProperty('visibility', 'visible', 'important');
+  footer.style.setProperty('opacity', '1', 'important');
 }
 
 /** html2canvas على الجوال لا يلتقط عناصر opacity≈0 — اجعل الورقة مرئية قبل اللقطة */
