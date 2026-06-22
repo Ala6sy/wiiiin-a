@@ -130,49 +130,45 @@ function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): vo
   });
 
   /*
-   * ─── Chip: inline-table بدل inline-flex ───────────────────────────
+   * ─── Chip: إصلاح المحاذاة العمودية بدون تغيير display ────────────────
    *
-   * السبب الجذري للمشكلة:
+   * السبب الجذري:
    *   html2canvas قد يُعالج inline-flex كـ inline عادي.
-   *   في هذه الحالة الأيقونة لها vertical-align:middle (من CSS) والنص
-   *   له vertical-align:baseline → يظهر النص أسفل من الأيقونة.
+   *   الأيقونة لها vertical-align:middle (من CSS) لكن النص له
+   *   vertical-align:baseline (الافتراضي) → النص ينزل أسفل الأيقونة.
    *
-   * الحل: inline-table + table-cell + vertical-align:middle.
-   *   html2canvas يدعم table layout بشكل كامل وموثوق.
-   *   الخلايا في نفس الصف لها نفس الارتفاع تلقائياً وتتمحور عمودياً.
+   * الحل الجذري المضمون:
+   *   نجعل النص ونفس ارتفاع الأيقونة متساويين: height = line-height = iconPx.
+   *   بذلك كلاهما 14px، وكلاهما vertical-align:middle → يتمحوران بالضبط
+   *   في نفس النقطة بغض النظر عن هل html2canvas يُطبّق flex أم inline.
+   *
+   *   لماذا لا نستخدم inline-table:
+   *   inline-table في سياق flex يُصبح block-table، مما يُكسر
+   *   margin-bottom على سطر الاسم ويُزيل الفراغ بينه وبين الشريط.
    */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-name-chip, .cv-skill-bar-name').forEach(chip => {
-    chip.style.setProperty('display', 'inline-table', 'important');
+    chip.style.setProperty('display', 'inline-flex', 'important');
+    chip.style.setProperty('flex-direction', 'row', 'important');
+    chip.style.setProperty('align-items', 'center', 'important');
     chip.style.setProperty('direction', 'ltr', 'important');
-    chip.style.setProperty('vertical-align', 'middle', 'important');
-    chip.style.setProperty('white-space', 'nowrap', 'important');
-    chip.style.setProperty('border-spacing', '0', 'important');
-    chip.style.setProperty('border-collapse', 'separate', 'important');
     chip.style.setProperty('gap', '0', 'important');
+    chip.style.setProperty('vertical-align', 'middle', 'important');
+  });
 
-    /* النص: خلية table-cell → محاذاة عمودية مضمونة */
-    chip.querySelectorAll<HTMLElement>('.cv-skill-bar-name-text').forEach(txt => {
-      txt.style.setProperty('display', 'table-cell', 'important');
-      txt.style.setProperty('vertical-align', 'middle', 'important');
-      txt.style.setProperty('padding-right', vars.iconNameGap, 'important');
-      txt.style.setProperty('padding-left', '0', 'important');
-      txt.style.setProperty('white-space', 'nowrap', 'important');
-      txt.style.setProperty('line-height', `${iconSizeNum}px`, 'important');
-    });
-
-    /* الأيقونة: خلية table-cell → محاذاة عمودية مضمونة */
-    chip.querySelectorAll<HTMLElement>('.cv-skill-icon').forEach(icon => {
-      icon.style.setProperty('display', 'table-cell', 'important');
-      icon.style.setProperty('vertical-align', 'middle', 'important');
-      icon.style.setProperty('width', iconPx, 'important');
-      icon.style.setProperty('height', iconPx, 'important');
-      icon.style.setProperty('max-width', iconPx, 'important');
-      icon.style.setProperty('min-width', iconPx, 'important');
-      icon.style.setProperty('max-height', iconPx, 'important');
-      icon.style.setProperty('min-height', iconPx, 'important');
-      icon.style.setProperty('object-fit', 'contain', 'important');
-      icon.style.setProperty('line-height', `${iconSizeNum}px`, 'important');
-    });
+  /*
+   * النص: نفس ارتفاع الأيقونة + line-height مطابق → يتمحور النص داخله.
+   * كلاهما vertical-align:middle → يتمحوران عند نفس خط x-height.
+   * margin-inline-end / margin-right بديل gap داخل الـ chip.
+   */
+  root.querySelectorAll<HTMLElement>('.cv-skill-bar-name-text').forEach(txt => {
+    txt.style.setProperty('display', 'inline-block', 'important');
+    txt.style.setProperty('vertical-align', 'middle', 'important');
+    txt.style.setProperty('height', iconPx, 'important');
+    txt.style.setProperty('line-height', iconPx, 'important');
+    txt.style.setProperty('overflow', 'hidden', 'important');
+    txt.style.setProperty('white-space', 'nowrap', 'important');
+    txt.style.setProperty('margin-inline-end', vars.iconNameGap, 'important');
+    txt.style.setProperty('margin-right', vars.iconNameGap, 'important');
   });
 
   /* ─── الشريط: block صريح ─── */
