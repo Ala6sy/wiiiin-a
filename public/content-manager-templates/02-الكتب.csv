@@ -1,0 +1,3 @@
+المعرّف (ID),معرّف العقدة (nodeId),عنوان الكتاب (عربي),عنوان الكتاب (إنجليزي),عنوان الكتاب (ألماني),المؤلف (عربي),المؤلف (إنجليزي),المؤلف (ألماني),رابط التحميل (Drive),رابط المعاينة (/preview),صورة الغلاف,مدفوع (1/0),السعر,العملة (USD…),عدد الصفحات,النوع (theory/practical/both),لغات الظهور (ar en de)
+book-agronomy-101,subject-agronomy,مبادئ علم المحاصيل,Principles of Agronomy,Grundlagen der Agronomie,م. علاء أحمد المصري,Eng. Alaa Ahmad Almasri,Ing. Alaa Ahmad Almasri,https://drive.google.com/file/d/YOUR_ID/view,,,0,,USD,120,theory,"ar, en"
+book-soil-lab,subject-soil,مختبر علم التربة — عملي,Soil Science Lab — Practical,Bodenkunde-Labor — Praktisch,م. علاء أحمد المصري,Eng. Alaa Ahmad Almasri,Ing. Alaa Ahmad Almasri,,,,1,15,USD,85,practical,ar

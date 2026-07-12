@@ -1,0 +1,69 @@
+
+npm install 
+
+
+npm run dev
+
+pnpm dev
+
+
+ npm run build
+---------
+
+
+رفع الملفات لغيت هاب
+طريقة اولى 
+لرفع أي تعديلات جديدة بطريقة صحيحة واحترافية
+
+git add .
+git commit -m 
+git push
+
+
+---------------------
+طريقة ثانية 
+
+
+rm -r -force .git
+git init
+git add .
+git commit -m "Fresh start again"
+git remote add origin https://github.com/Ala6sy/wiiiin-a.git
+git push -u origin main --force
+
+
+طريقة الثانية 
+إذا كنت تصر على جعل جميع الملفات تظهر بتوقيت واحد
+ لأغراض شكلية (وهو ممارسة سيئة جداً في المشاريع الحقيقية لأنه يدمر السجل التاريخي للمشروع وتتبع الأخطاء)، 
+فلن ينفعك أمر 
+git push
+ العادي.
+ ستضطر في كل مرة لإعادة تنفيذ الخطوات التدميرية بالكامل:
+
+
+
+--------------------
+
+
+
+git init
+git add .
+git commit -m "Update project files"
+git branch -M main
+git remote add origin https://github.com/Ala6sy/wiiiin-a.git
+git push -u origin main --force
+
+-------------------------
+
+
+
+
+
+----------------
+
+
+https://eng-alaa.com/api/reset_pass.php
+
+
+
+

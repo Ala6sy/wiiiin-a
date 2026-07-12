@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "O7odd13SFVZqj6aNDnez-"
+uri = "file://dist_hostinger.tar.gz"
+type = "unspecified"
+title = "dist_hostinger.tar.gz — ارفعه على Hostinger"
