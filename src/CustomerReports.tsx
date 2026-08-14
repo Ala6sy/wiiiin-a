@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { AppData, CustomerReport, CustomerReportRow, ReportType, ML, ml, pickML, LangKey, soilRowName } from './appData';
+import { AppData, CustomerReport, CustomerReportRow, ReportType, ML, ml, pickML, pickReportML, LangKey, soilRowName } from './appData';
+import { resolveImageSrc } from './mediaUrl';
+import { AlaaLogo } from './AlaaLogo';
+import { MlBulkTranslateButton, MlObjectTranslateButton } from './MlTranslateControls';
+import { mergeMlTranslation } from './mlTranslate';
 
 function uid() { return Math.random().toString(36).slice(2, 9); }
 
@@ -39,80 +43,155 @@ const CR = {
   paidStamp: ml('ختم الدفع', 'Payment Stamp', 'Zahlungsstempel'),
 };
 
-const td: React.CSSProperties = { padding: '6px 8px', borderBottom: '1px solid #e8f0e8', textAlign: 'start' };
+const td: React.CSSProperties = {
+  padding: '7px 8px',
+  borderBottom: '1px solid #e8f0e8',
+  textAlign: 'start',
+  verticalAlign: 'middle',
+  lineHeight: 1.45,
+};
 const a4Base: React.CSSProperties = { width: 794, background: '#fff', padding: 36, boxSizing: 'border-box', fontFamily: 'Tajawal, sans-serif', color: '#222' };
+const fluidBase: React.CSSProperties = { width: '100%', maxWidth: '100%', background: '#fff', padding: '18px 14px 28px', boxSizing: 'border-box', fontFamily: 'Tajawal, sans-serif', color: '#222' };
 
 /* ════════════════════════════════════════════════════
    A4 DOCUMENT RENDERER
 ════════════════════════════════════════════════════ */
-export function CustomerReportDoc({ data, report, lang, innerRef, forExport }: { data: AppData; report: CustomerReport; lang: LangKey; innerRef?: React.Ref<HTMLDivElement>; forExport?: boolean }) {
+export function CustomerReportDoc({ data, report, lang, innerRef, forExport, fluid }: {
+  data: AppData; report: CustomerReport; lang: LangKey; innerRef?: React.Ref<HTMLDivElement>; forExport?: boolean; fluid?: boolean;
+}) {
   const isRtl = lang === 'ar';
-  const L = (m: ML) => pickML(m, lang);
+  const L = (m: ML) => pickML(m, lang); /* تسميات الواجهة — دائماً مترجمة */
+  const T = (m: ML | string | undefined) => pickReportML(m, lang); /* محتوى التقرير — لغة واحدة فقط */
   const tpl = data.reportTemplate;
   const theme = (tpl.themeColor || FALLBACK_GREEN).trim() || FALLBACK_GREEN;
   const headerText = pickML(tpl.headerText, lang);
   const footerText = pickML(tpl.footerText, lang);
+  const engNameDisplay = pickML(tpl.engName, lang)
+    || (lang === 'de' ? 'Ing. Alaa Ahmad Almasri' : lang === 'ar' ? 'م. علاء أحمد المصري' : 'Eng. Alaa Ahmad Almasri');
+  const engNameColor = tpl.engNameColor || NAVY;
+  const st = data.siteSettings;
 
-  const sectionTitle: React.CSSProperties = { fontWeight: 900, color: theme, fontSize: 15, marginBottom: 10, paddingInlineStart: 8, borderInlineStart: `4px solid ${theme}` };
-  const docStyle: React.CSSProperties = forExport
-    ? a4Base
-    : { ...a4Base, minHeight: 1123, display: 'flex', flexDirection: 'column', boxShadow: '0 4px 24px rgba(0,0,0,0.12)' };
+  const sectionTitle: React.CSSProperties = { fontWeight: 900, color: theme, fontSize: fluid ? 14 : 15, marginBottom: 10, paddingInlineStart: 8, borderInlineStart: `4px solid ${theme}` };
+  const docStyle: React.CSSProperties = fluid
+    ? fluidBase
+    : forExport
+      ? a4Base
+      : { ...a4Base, minHeight: 1123, display: 'flex', flexDirection: 'column', boxShadow: '0 4px 24px rgba(0,0,0,0.12)' };
   const rType = report.reportType || 'soil';
   const docML = rType === 'disease' ? CR.docTitleDisease : rType === 'insect' ? CR.docTitleInsect : CR.docTitle;
   const typeML = rType === 'disease' ? CR.typeDisease : rType === 'insect' ? CR.typeInsect : CR.typeSoil;
-  const title = report.customerName ? `${L(docML)} — ${report.customerName}` : L(docML);
+  const custName = T(report.customerName);
+  const title = custName ? `${L(docML)} — ${custName}` : L(docML);
   const imgs = (report.images || []).filter(Boolean);
-  const rows = (report.soilRows || []).filter(r => L(r.test) || L(r.actual) || L(r.ideal));
+  const rows = (report.soilRows || []).filter(r => T(r.test) || T(r.actual) || T(r.ideal));
   const rowsTitle = rType === 'soil' ? L(CR.soilTitle) : L(CR.examResults);
   const currency = (data.currency || '').trim();
   const priceRows = (data.soilAnalysis || []).filter(r => r.name || r.price || r.tax);
   const grand = priceRows.reduce((a, r) => a + (parseFloat(r.price) || 0) * (1 + (parseFloat(r.tax) || 0) / 100), 0);
   const withCur = (n: string) => currency ? `${n} ${currency}` : n;
-  const descTxt = L(report.description);
-  const finalTxt = L(report.finalReport);
-  const plantTxt = L(report.plantName);
+  const descTxt = T(report.description);
+  const finalTxt = T(report.finalReport);
+  const plantTxt = T(report.plantName);
 
-  const info: [string, string][] = [
-    [L(CR.name), report.customerName],
-    [L(CR.phone), report.customerPhone],
-    [L(CR.location), report.customerLocation],
-    [L(CR.attendance), report.attendanceDate],
-    [L(CR.exam), report.examDate],
-  ].filter(([, v]) => v) as [string, string][];
+  const infoRows: { label: string; value: string; ltr?: boolean }[] = [
+    { label: L(CR.name), value: custName },
+    { label: L(CR.phone), value: report.customerPhone, ltr: true },
+    { label: L(CR.location), value: T(report.customerLocation) },
+    { label: L(CR.attendance), value: report.attendanceDate, ltr: true },
+    { label: L(CR.exam), value: report.examDate, ltr: true },
+  ].filter(r => r.value);
+
+  /* شعار علاء دائماً في تقرير التربة؛ شعار مخصص فقط إن رُفع في قالب التقرير */
+  const logoNode = tpl.headerLogo
+    ? <img className="soil-report-header-logo" src={resolveImageSrc(tpl.headerLogo)} alt="logo" style={{ height: 56, width: 'auto', objectFit: 'contain', flexShrink: 0, display: 'block' }} />
+    : <AlaaLogo color={engNameColor} size={56} style={{ display: 'block', flexShrink: 0 }} />;
+
+  const portalLine = headerText || engNameDisplay;
 
   return (
-    <div ref={innerRef} style={docStyle} dir={isRtl ? 'rtl' : 'ltr'}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', borderBottom: `3px solid ${theme}`, paddingBottom: 14, marginBottom: 18, gap: 12 }}>
-        {/* Logo + header text — constrained width so it never overflows into title */}
-        <div style={{ flexShrink: 0, maxWidth: '46%', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-          {tpl.headerLogo
-            ? <img src={tpl.headerLogo} alt="logo" style={{ height: 56, objectFit: 'contain', flexShrink: 0 }} />
-            : data.siteSettings.logoType === 'image' && data.siteSettings.logoImg
-              ? <img src={data.siteSettings.logoImg} alt="logo" style={{ height: 56, objectFit: 'contain', flexShrink: 0 }} />
-              : <div style={{ fontWeight: 900, color: NAVY, fontSize: 20, lineHeight: 1.25, wordBreak: 'break-word' }}>{pickML(data.siteSettings.logoText, lang) || 'ENG. ALAA'}</div>}
-          {headerText && <div style={{ fontWeight: 700, color: theme, fontSize: 13, lineHeight: 1.5, wordBreak: 'break-word' }}>{headerText}</div>}
+    <div ref={innerRef} style={docStyle} dir={isRtl ? 'rtl' : 'ltr'} className="soil-report-print-root">
+      {/* رأس التقرير: شعار علاء + اسم البوابة (منتصف عمودي) | عنوان التحليل */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        alignItems: 'center',
+        gap: 14,
+        borderBottom: `3px solid ${theme}`,
+        paddingBottom: 14,
+        marginBottom: 18,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+          {logoNode}
+          <div style={{
+            minWidth: 0,
+            fontWeight: 700,
+            color: theme,
+            fontSize: 13,
+            lineHeight: 1.35,
+            display: 'flex',
+            alignItems: 'center',
+          }}>
+            {portalLine}
+          </div>
         </div>
-        {/* Title — fills remaining space, never shrinks below 0 */}
-        <div style={{ flex: 1, minWidth: 0, textAlign: isRtl ? 'left' : 'right' }}>
-          <div style={{ fontWeight: 900, color: theme, fontSize: 16, wordBreak: 'break-word', lineHeight: 1.35 }}>{title}</div>
-          <div style={{ display: 'inline-block', marginTop: 5, background: theme, color: '#fff', fontSize: 10.5, fontWeight: 700, borderRadius: 20, padding: '3px 12px' }}>{L(typeML)}</div>
-          <div style={{ fontSize: 11.5, color: '#777', marginTop: 4 }}>{L(CR.date)}: {report.examDate || report.attendanceDate || ''}</div>
+        <div style={{ minWidth: 0, textAlign: 'end' }}>
+          <div style={{ fontWeight: 900, color: theme, fontSize: 17, lineHeight: 1.4, wordBreak: 'break-word', marginBottom: 10 }}>
+            {title}
+          </div>
+          <div
+            className="soil-report-type-badge"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: theme,
+              color: '#fff',
+              fontSize: 11,
+              fontWeight: 700,
+              borderRadius: 20,
+              padding: '6px 14px',
+              lineHeight: 1,
+              minHeight: 26,
+              boxSizing: 'border-box',
+            }}
+          >
+            {L(typeML)}
+          </div>
+          <div style={{ fontSize: 12, color: '#777', marginTop: 8 }}>
+            {L(CR.date)}: {report.examDate || report.attendanceDate || ''}
+          </div>
         </div>
       </div>
 
-      {/* Customer info */}
-      {info.length > 0 && (
+      {/* Customer info — تخطيط وثيقة A4 (بدون بطاقات مستطيلة) */}
+      {infoRows.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <div style={sectionTitle}>{L(CR.customer)}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {info.map(([label, value], i) => (
-              <div key={i} style={{ background: '#f7faf7', border: '1px solid #e0ece0', borderRadius: 8, padding: '7px 10px' }}>
-                <div style={{ fontSize: 10, color: '#8a9a8a', marginBottom: 3 }}>{label}</div>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: '#1d3a1d', wordBreak: 'break-word' }}>{value}</div>
-              </div>
-            ))}
-          </div>
+          <table className="soil-report-data-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+            <tbody>
+              {infoRows.map((row, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #e5efe5' }}>
+                  <td style={{ ...td, width: '34%', fontWeight: 700, color: theme, background: i % 2 ? '#fafcfa' : '#fff' }}>{row.label}</td>
+                  <td style={{
+                    ...td,
+                    fontWeight: 600,
+                    color: '#1d3a1d',
+                    background: i % 2 ? '#fafcfa' : '#fff',
+                    /* أرقام إنجليزية بالترتيب الصحيح، ومحاذاة مع بقية النص (يمين في العربية) */
+                    ...(row.ltr ? { direction: 'ltr', unicodeBidi: 'isolate', textAlign: isRtl ? 'right' : 'left' } : {}),
+                  }}>
+                    {row.value}
+                  </td>
+                </tr>
+              ))}
+              {plantTxt && (
+                <tr style={{ borderBottom: '1px solid #e5efe5' }}>
+                  <td style={{ ...td, fontWeight: 700, color: theme }}>{L(CR.plant)}</td>
+                  <td style={{ ...td, fontWeight: 700, color: '#1d3a1d' }}>{plantTxt}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -125,21 +204,11 @@ export function CustomerReportDoc({ data, report, lang, innerRef, forExport }: {
         </div>
       )}
 
-      {/* Plant + description */}
-      {(plantTxt || descTxt) && (
+      {/* Description only (plant moved into info table) */}
+      {descTxt && (
         <div style={{ marginBottom: 16 }}>
-          {plantTxt && (
-            <div style={{ background: '#f7faf7', border: '1px solid #e0ece0', borderRadius: 8, padding: '8px 10px', marginBottom: 8 }}>
-              <div style={{ fontSize: 10, color: '#8a9a8a', marginBottom: 3 }}><i className="fa-solid fa-seedling" style={{ color: theme }} /> {L(CR.plant)}</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#1d3a1d' }}>{plantTxt}</div>
-            </div>
-          )}
-          {descTxt && (
-            <>
-              <div style={sectionTitle}>{L(CR.description)}</div>
-              <div style={{ fontSize: 12.5, lineHeight: 1.9, color: '#333', whiteSpace: 'pre-wrap' }}>{descTxt}</div>
-            </>
-          )}
+          <div style={sectionTitle}>{L(CR.description)}</div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.9, color: '#333', whiteSpace: 'pre-wrap' }}>{descTxt}</div>
         </div>
       )}
 
@@ -147,20 +216,20 @@ export function CustomerReportDoc({ data, report, lang, innerRef, forExport }: {
       {rows.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <div style={sectionTitle}>{rowsTitle}</div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <table className="soil-report-data-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ background: theme, color: '#fff' }}>
                 {[CR.test, CR.actual, CR.ideal].map((h, i) => (
-                  <th key={i} style={{ padding: '7px 8px', textAlign: isRtl ? 'right' : 'left' }}>{L(h)}</th>
+                  <th key={i} style={{ padding: '8px 8px', textAlign: isRtl ? 'right' : 'left', verticalAlign: 'middle', lineHeight: 1.45 }}>{L(h)}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={r.id} style={{ background: i % 2 ? '#fff' : '#f6faf6' }}>
-                  <td style={{ ...td, fontWeight: 700, color: '#1d3a1d' }}>{L(r.test)}</td>
-                  <td style={td}>{L(r.actual)}</td>
-                  <td style={{ ...td, color: theme, fontWeight: 600 }}>{L(r.ideal)}</td>
+                  <td style={{ ...td, fontWeight: 700, color: '#1d3a1d' }}>{T(r.test)}</td>
+                  <td style={td}>{T(r.actual)}</td>
+                  <td style={{ ...td, color: theme, fontWeight: 600 }}>{T(r.ideal)}</td>
                 </tr>
               ))}
             </tbody>
@@ -180,11 +249,11 @@ export function CustomerReportDoc({ data, report, lang, innerRef, forExport }: {
       {priceRows.length > 0 && (
         <div style={{ marginBottom: 16, breakInside: 'avoid', pageBreakInside: 'avoid' }}>
           <div style={sectionTitle}>{L(CR.pricingTitle)}</div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <table className="soil-report-data-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ background: theme, color: '#fff' }}>
                 {[CR.priceItem, CR.price, CR.tax, CR.total].map((h, i) => (
-                  <th key={i} style={{ padding: '7px 8px', textAlign: isRtl ? 'right' : 'left', whiteSpace: 'nowrap' }}>{L(h)}</th>
+                  <th key={i} style={{ padding: '8px 8px', textAlign: isRtl ? 'right' : 'left', whiteSpace: 'nowrap', verticalAlign: 'middle', lineHeight: 1.45 }}>{L(h)}</th>
                 ))}
               </tr>
             </thead>
@@ -217,18 +286,24 @@ export function CustomerReportDoc({ data, report, lang, innerRef, forExport }: {
         <div style={{ display: 'flex', gap: 24, alignItems: 'flex-end' }}>
           <div style={{ textAlign: 'center', minWidth: 120 }}>
             {tpl.engSignature
-              ? <img src={tpl.engSignature} alt="" style={{ maxHeight: 60, maxWidth: 140, objectFit: 'contain' }} />
+              ? <img src={resolveImageSrc(tpl.engSignature)} alt="" style={{ maxHeight: 60, maxWidth: 140, objectFit: 'contain' }} />
               : <div style={{ height: 60 }} />}
             <div style={{ borderTop: '1px solid #999', marginTop: 4, paddingTop: 5, fontSize: 11, fontWeight: 700, color: '#444' }}>{L(CR.engSignature)}</div>
+            {(pickML(tpl.engName, lang) || '').trim() && (
+              <div style={{ fontSize: 11, fontWeight: 800, color: (tpl.engNameColor || NAVY), marginTop: 4 }}>
+                {pickML(tpl.engName, lang)}
+              </div>
+            )}
           </div>
           {tpl.engStamp && (
             <div style={{ textAlign: 'center' }}>
-              <img src={tpl.engStamp} alt="" style={{ maxHeight: 80, maxWidth: 110, objectFit: 'contain' }} />
+              <img src={resolveImageSrc(tpl.engStamp)} alt="" style={{ maxHeight: 80, maxWidth: 110, objectFit: 'contain' }} />
+              <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: '#444' }}>{L(CR.engStamp)}</div>
             </div>
           )}
           {tpl.paidStamp && (
             <div style={{ textAlign: 'center' }}>
-              <img src={tpl.paidStamp} alt="" style={{ maxHeight: 80, maxWidth: 110, objectFit: 'contain' }} />
+              <img src={resolveImageSrc(tpl.paidStamp)} alt="" style={{ maxHeight: 80, maxWidth: 110, objectFit: 'contain' }} />
               <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: '#444' }}>{L(CR.paidStamp)}</div>
             </div>
           )}
@@ -267,11 +342,56 @@ function fileToDataUrl(file: File, max = 1100): Promise<string> {
 }
 
 const emptyReport = (): CustomerReport => ({
-  id: uid(), customerName: '', customerPhone: '', customerLocation: '',
-  attendanceDate: new Date().toISOString().split('T')[0], examDate: new Date().toISOString().split('T')[0],
-  images: [], plantName: ml('', '', ''), description: ml('', '', ''),
-  soilRows: [], finalReport: ml('', '', ''), reportType: 'soil', createdAt: new Date().toISOString(),
+  id: uid(),
+  customerName: ml('', '', ''),
+  customerPhone: '',
+  customerLocation: ml('', '', ''),
+  attendanceDate: new Date().toISOString().split('T')[0],
+  examDate: new Date().toISOString().split('T')[0],
+  images: [],
+  plantName: ml('', '', ''),
+  description: ml('', '', ''),
+  soilRows: [],
+  finalReport: ml('', '', ''),
+  reportType: 'soil',
+  createdAt: new Date().toISOString(),
 });
+
+function collectReportArFields(r: CustomerReport): Record<string, string> {
+  const f: Record<string, string> = {};
+  if (r.customerName.ar?.trim()) f.customerName = r.customerName.ar.trim();
+  if (r.customerLocation.ar?.trim()) f.customerLocation = r.customerLocation.ar.trim();
+  if (r.plantName.ar?.trim()) f.plantName = r.plantName.ar.trim();
+  if (r.description.ar?.trim()) f.description = r.description.ar.trim();
+  if (r.finalReport.ar?.trim()) f.finalReport = r.finalReport.ar.trim();
+  for (const row of r.soilRows) {
+    if (row.test.ar?.trim()) f[`row.${row.id}.test`] = row.test.ar.trim();
+    if (row.actual.ar?.trim()) f[`row.${row.id}.actual`] = row.actual.ar.trim();
+    if (row.ideal.ar?.trim()) f[`row.${row.id}.ideal`] = row.ideal.ar.trim();
+  }
+  return f;
+}
+
+function applyReportTranslations(
+  r: CustomerReport,
+  tr: Record<string, { en: string; de: string }>,
+): CustomerReport {
+  const apply = (m: ML, key: string): ML => (tr[key] ? mergeMlTranslation(m, tr[key], true) : m);
+  return {
+    ...r,
+    customerName: apply(r.customerName, 'customerName'),
+    customerLocation: apply(r.customerLocation, 'customerLocation'),
+    plantName: apply(r.plantName, 'plantName'),
+    description: apply(r.description, 'description'),
+    finalReport: apply(r.finalReport, 'finalReport'),
+    soilRows: r.soilRows.map(row => ({
+      ...row,
+      test: apply(row.test, `row.${row.id}.test`),
+      actual: apply(row.actual, `row.${row.id}.actual`),
+      ideal: apply(row.ideal, `row.${row.id}.ideal`),
+    })),
+  };
+}
 
 export function CustomerReportsAdmin({ data, onSave }: { data: AppData; onSave: (u: Partial<AppData>) => void }) {
   const THEME = '#2a7a2a';
@@ -351,7 +471,7 @@ export function CustomerReportsAdmin({ data, onSave }: { data: AppData; onSave: 
 
   /* مشاركة واتساب — يستخدم navigator.share على الجوال */
   function shareWA(report: CustomerReport) {
-    const name = report.customerName || 'تقرير';
+    const name = pickML(report.customerName, 'ar') || 'تقرير';
     const text = `📋 ${name}\n${window.location.href}`;
     if (navigator.share) {
       navigator.share({ title: name, text }).catch(() =>
@@ -370,7 +490,7 @@ export function CustomerReportsAdmin({ data, onSave }: { data: AppData; onSave: 
     setEdit({ ...edit, images: [...edit.images, ...urls].slice(0, 6) });
   }
 
-  const setML = (key: 'plantName' | 'description' | 'finalReport', v: string) => {
+  const setML = (key: 'customerName' | 'customerLocation' | 'plantName' | 'description' | 'finalReport', v: string) => {
     if (!edit) return;
     setEdit({ ...edit, [key]: { ...edit[key], [lang]: v } });
   };
@@ -404,9 +524,18 @@ export function CustomerReportsAdmin({ data, onSave }: { data: AppData; onSave: 
     const uc = lang.toUpperCase();
     return (
       <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
           <h4 style={{ margin: 0 }}>{reports.find(r => r.id === edit.id) ? 'تعديل تقرير عميل' : 'تقرير عميل جديد'}</h4>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>{langBtns}<button className="btn-cancel" onClick={() => setEdit(null)}>✕ إلغاء</button></div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            {langBtns}
+            <MlBulkTranslateButton
+              label="ترجمة الكل من العربية"
+              context="agricultural soil analysis customer report"
+              fields={collectReportArFields(edit)}
+              onComplete={tr => setEdit(applyReportTranslations(edit, tr))}
+            />
+            <button className="btn-cancel" onClick={() => setEdit(null)}>✕ إلغاء</button>
+          </div>
         </div>
 
         <div className="form-group">
@@ -425,10 +554,22 @@ export function CustomerReportsAdmin({ data, onSave }: { data: AppData; onSave: 
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div className="form-group"><label>اسم العميل</label><input value={edit.customerName} onChange={e => setEdit({ ...edit, customerName: e.target.value })} /></div>
+          <div className="form-group">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              اسم العميل ({uc})
+              <MlObjectTranslateButton small value={edit.customerName} onChange={customerName => setEdit({ ...edit, customerName })} context="customer person name" />
+            </label>
+            <input value={edit.customerName[lang] || ''} onChange={e => setML('customerName', e.target.value)} />
+          </div>
           <div className="form-group"><label>رقم الهاتف</label><input value={edit.customerPhone} style={{ direction: 'ltr' }} onChange={e => setEdit({ ...edit, customerPhone: e.target.value })} /></div>
         </div>
-        <div className="form-group"><label>الموقع / المكان</label><input value={edit.customerLocation} onChange={e => setEdit({ ...edit, customerLocation: e.target.value })} /></div>
+        <div className="form-group">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            الموقع / المكان ({uc})
+            <MlObjectTranslateButton small value={edit.customerLocation} onChange={customerLocation => setEdit({ ...edit, customerLocation })} context="geographic location" />
+          </label>
+          <input value={edit.customerLocation[lang] || ''} onChange={e => setML('customerLocation', e.target.value)} />
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div className="form-group"><label>تاريخ الحضور</label><input type="date" value={edit.attendanceDate} onChange={e => setEdit({ ...edit, attendanceDate: e.target.value })} /></div>
           <div className="form-group"><label>تاريخ الفحص</label><input type="date" value={edit.examDate} onChange={e => setEdit({ ...edit, examDate: e.target.value })} /></div>
@@ -453,8 +594,20 @@ export function CustomerReportsAdmin({ data, onSave }: { data: AppData; onSave: 
           </div>
         </div>
 
-        <div className="form-group"><label>النبات المزروع ({uc})</label><input value={edit.plantName[lang] || ''} onChange={e => setML('plantName', e.target.value)} /></div>
-        <div className="form-group"><label>الوصف ({uc})</label><textarea rows={4} value={edit.description[lang] || ''} onChange={e => setML('description', e.target.value)} /></div>
+        <div className="form-group">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            النبات المزروع ({uc})
+            <MlObjectTranslateButton small value={edit.plantName} onChange={plantName => setEdit({ ...edit, plantName })} context="crop plant name" />
+          </label>
+          <input value={edit.plantName[lang] || ''} onChange={e => setML('plantName', e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            الوصف ({uc})
+            <MlObjectTranslateButton small value={edit.description} onChange={description => setEdit({ ...edit, description })} context="soil report description" />
+          </label>
+          <textarea rows={4} value={edit.description[lang] || ''} onChange={e => setML('description', e.target.value)} />
+        </div>
 
         {/* soil rows */}
         <div className="form-group">
@@ -472,9 +625,17 @@ export function CustomerReportsAdmin({ data, onSave }: { data: AppData; onSave: 
           <button className="btn-outline-sm" style={{ marginTop: 8 }} onClick={addRow}><i className="fa-solid fa-plus" /> إضافة صف</button>
         </div>
 
-        <div className="form-group"><label>التقرير النهائي الشامل ({uc})</label><textarea rows={6} value={edit.finalReport[lang] || ''} onChange={e => setML('finalReport', e.target.value)} /></div>
+        <div className="form-group">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            التقرير النهائي الشامل ({uc})
+            <MlObjectTranslateButton small value={edit.finalReport} onChange={finalReport => setEdit({ ...edit, finalReport })} context="final soil analysis recommendations" />
+          </label>
+          <textarea rows={6} value={edit.finalReport[lang] || ''} onChange={e => setML('finalReport', e.target.value)} />
+        </div>
 
-        <p style={{ fontSize: 12, color: '#888' }}><i className="fa-solid fa-language" /> استخدم أزرار اللغة بالأعلى لتعبئة الحقول النصية بكل لغة. الصور والبيانات والتواريخ مشتركة بين اللغات.</p>
+        <p style={{ fontSize: 12, color: '#888' }}>
+          <i className="fa-solid fa-language" /> اكتب بالعربية أولاً ثم اضغط «ترجمة الكل من العربية» لملء الإنجليزية والألمانية تلقائياً (مثل باقي الموقع). عند عرض التقرير بلغة معيّنة يظهر نص تلك اللغة فقط — بدون خلط عربي/إنجليزي.
+        </p>
 
         {/* live preview */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '12px 0 6px' }}>
@@ -524,7 +685,7 @@ export function CustomerReportsAdmin({ data, onSave }: { data: AppData; onSave: 
               <div style={{ display: 'flex', gap: 10 }}>
                 {r.images[0] && <img src={r.images[0]} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8 }} />}
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: THEME, wordBreak: 'break-word' }}>{r.customerName || '—'}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: THEME, wordBreak: 'break-word' }}>{pickML(r.customerName, 'ar') || '—'}</div>
                   <div style={{ fontSize: 11, color: '#666', direction: 'ltr', textAlign: 'start' }}>{r.customerPhone}</div>
                   <div style={{ fontSize: 11, color: '#888' }}>{r.examDate}</div>
                   <div style={{ display: 'inline-block', marginTop: 4, background: THEME, color: '#fff', fontSize: 9.5, fontWeight: 700, borderRadius: 12, padding: '2px 8px' }}>

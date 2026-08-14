@@ -25,6 +25,169 @@ export function computeCaptureScale(cssW: number, cssH: number, target = EXPORT_
   return Math.max(1, Math.min(target, s));
 }
 
+export function applyPlantReportPdfLayoutFixes(root: ParentNode): void {
+  root.querySelectorAll<HTMLElement>(
+    '.plant-report-nutrients-table th, .plant-report-nutrients-table td, .soil-report-data-table th, .soil-report-data-table td',
+  ).forEach(cell => {
+    cell.style.setProperty('display', 'table-cell', 'important');
+    cell.style.setProperty('vertical-align', 'middle', 'important');
+    cell.style.setProperty('line-height', '1.35', 'important');
+    /* html2canvas يرسم حروف Tajawal أسفل السطر — تعويض بصري ليطابق المعاينة */
+    cell.style.setProperty('padding-top', '5px', 'important');
+    cell.style.setProperty('padding-bottom', '10px', 'important');
+  });
+
+  root.querySelectorAll<HTMLElement>(
+    '.plant-report-signature-img, .plant-report-stamp-img, .plant-report-header-logo, .soil-report-header-logo',
+  ).forEach(img => {
+    img.style.setProperty('display', 'inline-block', 'important');
+    img.style.setProperty('visibility', 'visible', 'important');
+    img.style.setProperty('opacity', '1', 'important');
+    img.style.setProperty('vertical-align', 'middle', 'important');
+  });
+}
+
+/** شارة النوع → صورة مرسومة في المنتصف (html2canvas لا يوسّط نص flex/Tajawal) */
+export async function rasterizeSoilTypeBadgesForCapture(root: HTMLElement): Promise<void> {
+  const badges = [...root.querySelectorAll<HTMLElement>('.soil-report-type-badge')];
+  for (const badge of badges) {
+    if (badge.tagName === 'IMG') continue;
+    const text = (badge.textContent || '').trim();
+    if (!text) continue;
+    const cs = getComputedStyle(badge);
+    const w = Math.max(48, Math.ceil(badge.getBoundingClientRect().width || parseFloat(cs.width) || 90));
+    const h = Math.max(22, Math.ceil(badge.getBoundingClientRect().height || parseFloat(cs.height) || 26));
+    const fontSize = parseFloat(cs.fontSize) || 11;
+    const bg = cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)'
+      ? cs.backgroundColor
+      : '#2a7a2a';
+    const dpr = 3;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) continue;
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+    const r = h / 2;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.arcTo(w, 0, w, h, r);
+    ctx.arcTo(w, h, 0, h, r);
+    ctx.arcTo(0, h, 0, 0, r);
+    ctx.arcTo(0, 0, w, 0, r);
+    ctx.closePath();
+    ctx.fillStyle = bg;
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `700 ${fontSize}px Tajawal, Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    /* منتصف هندسي حقيقي — يطابق المعاينة */
+    ctx.fillText(text, w / 2, h / 2 + 0.5);
+    const img = document.createElement('img');
+    img.src = canvas.toDataURL('image/png');
+    img.alt = text;
+    img.className = 'soil-report-type-badge soil-report-type-badge-raster';
+    img.style.cssText = `height:${h}px;width:${w}px;display:inline-block;vertical-align:middle;object-fit:contain;`;
+    badge.replaceWith(img);
+  }
+}
+
+function imgProxyUrl(src: string): string {
+  const base = typeof window !== 'undefined' && window.location.pathname.includes('/api/')
+    ? '../api/img-proxy.php'
+    : '/api/img-proxy.php';
+  return `${base}?url=${encodeURIComponent(src)}`;
+}
+
+function loadImageForRaster(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('image load failed'));
+    img.src = src;
+  });
+}
+
+async function rasterizeImageElement(img: HTMLImageElement): Promise<void> {
+  const raw = img.getAttribute('src') || img.src || '';
+  if (!raw || raw.startsWith('blob:')) return;
+
+  let loaded: HTMLImageElement | null = null;
+  const candidates = [raw];
+  if (/^https?:\/\//i.test(raw)) candidates.push(imgProxyUrl(raw));
+
+  for (const url of candidates) {
+    try {
+      loaded = await loadImageForRaster(url);
+      break;
+    } catch { /* try next */ }
+  }
+  if (!loaded || loaded.naturalWidth < 1 || loaded.naturalHeight < 1) return;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = loaded.naturalWidth;
+  canvas.height = loaded.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.drawImage(loaded, 0, 0);
+  img.src = canvas.toDataURL('image/png');
+  img.style.visibility = 'visible';
+  img.style.opacity = '1';
+  img.style.display = 'inline-block';
+}
+
+/** يحوّل صور التوقيع/الختم/الشعار إلى data-URL قبل html2canvas — يمنع اختفاءها في PDF */
+export async function rasterizeReportImagesForCapture(root: HTMLElement): Promise<void> {
+  const imgs = [
+    ...root.querySelectorAll<HTMLImageElement>('.plant-report-signature-img'),
+    ...root.querySelectorAll<HTMLImageElement>('.plant-report-stamp-img'),
+    ...root.querySelectorAll<HTMLImageElement>('.plant-report-header-logo'),
+    ...root.querySelectorAll<HTMLImageElement>('.soil-report-header-logo'),
+  ];
+  await Promise.all(imgs.map(img => rasterizeImageElement(img).catch(() => undefined)));
+}
+
+/** حوّل شعار SVG (AIA) إلى صورة PNG حتى يظهر في لقطة PDF */
+export async function rasterizeInlineSvgsForCapture(root: HTMLElement): Promise<void> {
+  const svgs = [...root.querySelectorAll('svg')];
+  await Promise.all(svgs.map(async (svg) => {
+    try {
+      const xml = new XMLSerializer().serializeToString(svg);
+      const svg64 = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
+      const loaded = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = () => reject(new Error('svg'));
+        i.src = svg64;
+      });
+      const cssH = Number(svg.getAttribute('height')) || svg.clientHeight || 58;
+      const cssW = Number(svg.getAttribute('width')) || svg.clientWidth || cssH;
+      const dpr = 2;
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(cssW * dpr));
+      c.height = Math.max(1, Math.round(cssH * dpr));
+      const ctx = c.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(loaded, 0, 0, c.width, c.height);
+      const img = document.createElement('img');
+      img.src = c.toDataURL('image/png');
+      img.alt = 'logo';
+      img.className = 'plant-report-header-logo';
+      img.style.height = `${cssH}px`;
+      img.style.width = 'auto';
+      img.style.objectFit = 'contain';
+      img.style.flexShrink = '0';
+      img.style.display = 'inline-block';
+      img.style.visibility = 'visible';
+      img.style.opacity = '1';
+      svg.replaceWith(img);
+    } catch { /* keep svg */ }
+  }));
+}
+
 export function applyCvFooterForCapture(scope: ParentNode): void {
   scope.querySelectorAll<HTMLElement>('.cv-a4-sheet, .a4-page').forEach(sheet => {
     sheet.style.setProperty('--cv-pad-x', '14mm', 'important');
@@ -117,13 +280,21 @@ function html2canvasOpts(
   if (withPrepare) {
     base.onclone = (doc: Document, node?: Element | null) => {
       const root = findPrintRoot(doc, node);
-      if (root) prepareExportRoot(root, width, height);
+      if (root) {
+        prepareExportRoot(root, width, height);
+        applyPlantReportPdfLayoutFixes(root);
+      }
       doc.querySelectorAll('img').forEach(img => {
         if (!(img instanceof HTMLImageElement)) return;
-        if (!img.src || (img.complete && img.naturalWidth === 0)) {
-          img.style.visibility = 'hidden';
+        const src = img.getAttribute('src') || img.src || '';
+        if (!src) {
           img.style.display = 'none';
+          return;
         }
+        img.loading = 'eager';
+        img.style.visibility = 'visible';
+        img.style.opacity = '1';
+        img.style.display = img.style.display === 'none' ? 'inline-block' : (img.style.display || 'inline-block');
       });
     };
   }
@@ -302,6 +473,10 @@ async function captureRoot(
 ): Promise<string> {
   await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
   await waitForImages(el);
+  await rasterizeInlineSvgsForCapture(el);
+  await rasterizeReportImagesForCapture(el);
+  await rasterizeSoilTypeBadgesForCapture(el);
+  applyPlantReportPdfLayoutFixes(el);
 
   let cssH = await measureFullHeight(el);
   prepareExportRoot(el, widthPx, cssH);

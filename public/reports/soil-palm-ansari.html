@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>نخيل التمر (Phoenix dactylifera) — أحمد الأنصاري / Ahmed Al-Ansari | Soil Report</title>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root { --green:#2a7a2a; --navy:#003366; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: Tajawal, sans-serif; background:#eef2f0; color:#1a1a1a; }
+    .topbar { position:sticky; top:0; z-index:5; display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:space-between;
+      padding:10px 16px; background:#0b1a12; color:#fff; }
+    .topbar h1 { margin:0; font-size:15px; font-weight:800; }
+    .langs { display:flex; gap:6px; }
+    .langs button, .print-btn { border:1px solid rgba(255,255,255,.25); background:rgba(255,255,255,.08); color:#fff;
+      border-radius:999px; padding:7px 14px; font:inherit; font-weight:700; font-size:12px; cursor:pointer; }
+    .langs button.active { background:var(--green); border-color:var(--green); }
+    .wrap { max-width:900px; margin:18px auto 40px; padding:0 12px; }
+    .panel { background:#fff; border-radius:14px; padding:28px 26px; box-shadow:0 10px 30px rgba(0,40,20,.08); }
+    .head { display:flex; justify-content:space-between; gap:16px; border-bottom:3px solid var(--green); padding-bottom:14px; margin-bottom:18px; flex-wrap:wrap; }
+    .brand { font-weight:900; color:var(--navy); font-size:18px; }
+    .sub { font-size:11px; color:#667; margin-top:2px; }
+    .head-title { text-align:end; }
+    .head-title h1 { margin:0; color:var(--green); font-size:18px; }
+    .badge { display:inline-block; margin-top:6px; background:var(--green); color:#fff; font-size:11px; font-weight:700; border-radius:999px; padding:3px 12px; }
+    h2 { color:var(--green); font-size:15px; margin:20px 0 10px; padding-inline-start:8px; border-inline-start:4px solid var(--green); }
+    .info-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; }
+    .info-grid div { background:#f6faf6; border:1px solid #d7e8d7; border-radius:10px; padding:10px 12px; }
+    .info-grid b { display:block; font-size:11px; color:var(--green); margin-bottom:4px; }
+    .info-grid span { font-size:13px; font-weight:700; }
+    .desc, .final { line-height:1.85; font-size:14px; white-space:pre-wrap; }
+    .final { background:#f3faf3; border:1px solid #cfe3cf; border-radius:12px; padding:14px 16px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th { background:var(--green); color:#fff; padding:9px 8px; text-align:start; }
+    td { padding:8px; border-bottom:1px solid #e5efe5; vertical-align:top; }
+    td.actual { font-weight:800; color:#8a1c1c; }
+    td.ideal { font-weight:700; color:#1b5e20; }
+    .sign-row { display:flex; justify-content:space-between; gap:20px; margin-top:34px; flex-wrap:wrap; align-items:flex-end; }
+    .sign-box { min-width:200px; text-align:center; }
+    .sign-line { height:48px; border-bottom:1.5px solid #333; margin-bottom:8px; }
+    .stamp-box { text-align:center; }
+    .stamp-circle { width:110px; height:110px; margin:0 auto 8px; border:3px double var(--green); border-radius:50%;
+      display:flex; align-items:center; justify-content:center; color:var(--green); font-weight:900; font-size:12px; transform:rotate(-8deg); }
+    .hint { font-size:10px; color:#778; max-width:220px; line-height:1.4; margin:0 auto; }
+    @media print {
+      .topbar { display:none !important; }
+      body { background:#fff; }
+      .wrap { margin:0; max-width:none; padding:0; }
+      .panel { box-shadow:none; border-radius:0; padding:0; }
+      .panel[hidden] { display:none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>نخيل التمر (Phoenix dactylifera) — أحمد الأنصاري / Ahmed Al-Ansari</h1>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div class="langs">
+        <button type="button" data-set="ar" class="active">العربية</button>
+        <button type="button" data-set="en">English</button>
+        <button type="button" data-set="de">Deutsch</button>
+      </div>
+      <button type="button" class="print-btn" onclick="window.print()">طباعة / PDF</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <section class="panel" data-lang="ar" dir="rtl" hidden>
+      <header class="head">
+        <div>
+          <div class="brand">م. علاء أحمد المصري</div>
+          <div class="sub">eng-alaa.com · Agricultural Engineering</div>
+        </div>
+        <div class="head-title">
+          <h1>تقرير تحليل التربة</h1>
+          <span class="badge">نخيل التمر (Phoenix dactylifera)</span>
+        </div>
+      </header>
+
+      <h2>بيانات العميل</h2>
+      <div class="info-grid">
+        <div><b>الاسم</b><span>أحمد الأنصاري / Ahmed Al-Ansari</span></div>
+        <div><b>الهاتف</b><span>+971 50 123 4567</span></div>
+        <div><b>الموقع</b><span>دبي، الإمارات العربية المتحدة / Dubai, UAE</span></div>
+        <div><b>تاريخ الحضور</b><span>2026-07-10</span></div>
+        <div><b>تاريخ الفحص</b><span>2026-07-13</span></div>
+        <div><b>النبات</b><span>نخيل التمر (Phoenix dactylifera)</span></div>
+      </div>
+
+      <h2>الوصف</h2>
+      <p class="desc">نخيل تمر في دبي تظهر عليه حروق أطراف السعف واصفرار بين العروق. يُشتبه بنقص بوتاسيوم ومغنيسيوم مع إجهاد ملحي.</p>
+
+      <h2>نتائج تحليل التربة</h2>
+      <table>
+        <thead>
+          <tr><th>عنصر الفحص</th><th>النتيجة الفعلية</th><th>القراءة المثلى للنبات</th></tr>
+        </thead>
+        <tbody><tr>
+        <td>درجة الحموضة pH</td>
+        <td class="actual">8.1</td>
+        <td class="ideal">7.0 – 8.0</td>
+      </tr>
+<tr>
+        <td>الملوحة EC (مللي سيمنز/سم)</td>
+        <td class="actual">4.1</td>
+        <td class="ideal">&lt; 4.0 (تحمل النخيل)</td>
+      </tr>
+<tr>
+        <td>المادة العضوية %</td>
+        <td class="actual">1.1%</td>
+        <td class="ideal">1.5 – 3.0%</td>
+      </tr>
+<tr>
+        <td>نيتروجين N</td>
+        <td class="actual">متوسط / Medium</td>
+        <td class="ideal">متوسط</td>
+      </tr>
+<tr>
+        <td>فوسفور P</td>
+        <td class="actual">متوسط / Medium</td>
+        <td class="ideal">متوسط</td>
+      </tr>
+<tr>
+        <td>بوتاسيوم K</td>
+        <td class="actual">ناقص بشدة</td>
+        <td class="ideal">مرتفع للنخيل</td>
+      </tr>
+<tr>
+        <td>مغنيسيوم Mg</td>
+        <td class="actual">ناقص / Deficient</td>
+        <td class="ideal">كافٍ–مرتفع</td>
+      </tr>
+<tr>
+        <td>كالسيوم Ca</td>
+        <td class="actual">مرتفع / High</td>
+        <td class="ideal">متوازن مع K/Mg</td>
+      </tr>
+<tr>
+        <td>حديد Fe</td>
+        <td class="actual">منخفض عند pH مرتفع</td>
+        <td class="ideal">كافٍ</td>
+      </tr>
+<tr>
+        <td>زنك Zn</td>
+        <td class="actual">منخفض / Low</td>
+        <td class="ideal">كافٍ</td>
+      </tr>
+<tr>
+        <td>بورون B</td>
+        <td class="actual">متوسط / Medium</td>
+        <td class="ideal">كافٍ (تجنب الزيادة)</td>
+      </tr>
+<tr>
+        <td>صوديوم Na / SAR</td>
+        <td class="actual">مرتفع</td>
+        <td class="ideal">منخفض–متوسط</td>
+      </tr>
+<tr>
+        <td>الصرف حول الحوض</td>
+        <td class="actual">متوسط–ضعيف</td>
+        <td class="ideal">صرف جيد عميق</td>
+      </tr></tbody>
+      </table>
+
+      <h2>التقرير النهائي والتوصيات</h2>
+      <p class="final">الخلاصة: نقص K و Mg مع ملوحة مرتفعة وpH قلوي يحدّ من امتصاص الحديد والزنك. التوصيات: سماد بوتاسيوم + مغنيسيوم، تحسين صرف الحوض، ري عميق متباعد، مادة عضوية خفيفة، حديد/زنك مخلب عند الحاجة، ومراقبة EC شهرياً.</p>
+
+      <footer class="sign-row">
+        <div class="sign-box">
+          <div class="sign-line"></div>
+          <div><b>توقيع المهندس</b></div>
+          <div>م. علاء أحمد المصري</div>
+        </div>
+        <div class="stamp-box">
+          <div class="stamp-circle">الختم</div>
+          <div class="hint">نموذج عرض — توقيع وختم المهندس كما في إعدادات التقرير بالموقع</div>
+        </div>
+      </footer>
+    </section>
+<section class="panel" data-lang="en" dir="ltr" hidden>
+      <header class="head">
+        <div>
+          <div class="brand">Eng. Alaa Ahmad Almasri</div>
+          <div class="sub">eng-alaa.com · Agricultural Engineering</div>
+        </div>
+        <div class="head-title">
+          <h1>Soil Analysis Report</h1>
+          <span class="badge">Date palm (Phoenix dactylifera)</span>
+        </div>
+      </header>
+
+      <h2>Customer details</h2>
+      <div class="info-grid">
+        <div><b>Name</b><span>أحمد الأنصاري / Ahmed Al-Ansari</span></div>
+        <div><b>Phone</b><span>+971 50 123 4567</span></div>
+        <div><b>Location</b><span>دبي، الإمارات العربية المتحدة / Dubai, UAE</span></div>
+        <div><b>Attendance date</b><span>2026-07-10</span></div>
+        <div><b>Examination date</b><span>2026-07-13</span></div>
+        <div><b>Crop</b><span>Date palm (Phoenix dactylifera)</span></div>
+      </div>
+
+      <h2>Description</h2>
+      <p class="desc">Date palms in Dubai showing frond tip burn and interveinal yellowing. Suspected K/Mg deficiency with salinity stress.</p>
+
+      <h2>Soil analysis results</h2>
+      <table>
+        <thead>
+          <tr><th>Test item</th><th>Actual result</th><th>Ideal for the crop</th></tr>
+        </thead>
+        <tbody><tr>
+        <td>Soil pH</td>
+        <td class="actual">8.1</td>
+        <td class="ideal">7.0 – 8.0</td>
+      </tr>
+<tr>
+        <td>Salinity EC (mS/cm)</td>
+        <td class="actual">4.1</td>
+        <td class="ideal">&lt; 4.0 (palm tolerance)</td>
+      </tr>
+<tr>
+        <td>Organic matter %</td>
+        <td class="actual">1.1%</td>
+        <td class="ideal">1.5 – 3.0%</td>
+      </tr>
+<tr>
+        <td>Nitrogen N</td>
+        <td class="actual">متوسط / Medium</td>
+        <td class="ideal">Medium</td>
+      </tr>
+<tr>
+        <td>Phosphorus P</td>
+        <td class="actual">متوسط / Medium</td>
+        <td class="ideal">Medium</td>
+      </tr>
+<tr>
+        <td>Potassium K</td>
+        <td class="actual">ناقص بشدة</td>
+        <td class="ideal">High for palm</td>
+      </tr>
+<tr>
+        <td>Magnesium Mg</td>
+        <td class="actual">ناقص / Deficient</td>
+        <td class="ideal">Adequate–High</td>
+      </tr>
+<tr>
+        <td>Calcium Ca</td>
+        <td class="actual">مرتفع / High</td>
+        <td class="ideal">Balanced with K/Mg</td>
+      </tr>
+<tr>
+        <td>Iron Fe</td>
+        <td class="actual">منخفض عند pH مرتفع</td>
+        <td class="ideal">Adequate</td>
+      </tr>
+<tr>
+        <td>Zinc Zn</td>
+        <td class="actual">منخفض / Low</td>
+        <td class="ideal">Adequate</td>
+      </tr>
+<tr>
+        <td>Boron B</td>
+        <td class="actual">متوسط / Medium</td>
+        <td class="ideal">Adequate (avoid excess)</td>
+      </tr>
+<tr>
+        <td>Sodium Na / SAR</td>
+        <td class="actual">مرتفع</td>
+        <td class="ideal">Low–Medium</td>
+      </tr>
+<tr>
+        <td>Basin drainage</td>
+        <td class="actual">متوسط–ضعيف</td>
+        <td class="ideal">Good deep drainage</td>
+      </tr></tbody>
+      </table>
+
+      <h2>Final report &amp; recommendations</h2>
+      <p class="final">Summary: K and Mg deficiency with high salinity and alkaline pH limiting Fe/Zn uptake. Recommendations: potassium + magnesium fertilizer, improve basin drainage, deep infrequent irrigation, light organic matter, chelated Fe/Zn if needed, monthly EC monitoring.</p>
+
+      <footer class="sign-row">
+        <div class="sign-box">
+          <div class="sign-line"></div>
+          <div><b>Engineer signature</b></div>
+          <div>Eng. Alaa Ahmad Almasri</div>
+        </div>
+        <div class="stamp-box">
+          <div class="stamp-circle">Stamp</div>
+          <div class="hint">Display sample — engineer signature &amp; stamp follow Site Report Settings</div>
+        </div>
+      </footer>
+    </section>
+<section class="panel" data-lang="de" dir="ltr" hidden>
+      <header class="head">
+        <div>
+          <div class="brand">Ing. Alaa Ahmad Almasri</div>
+          <div class="sub">eng-alaa.com · Agricultural Engineering</div>
+        </div>
+        <div class="head-title">
+          <h1>Bodenanalysebericht</h1>
+          <span class="badge">Dattelpalme (Phoenix dactylifera)</span>
+        </div>
+      </header>
+
+      <h2>Kundendaten</h2>
+      <div class="info-grid">
+        <div><b>Name</b><span>أحمد الأنصاري / Ahmed Al-Ansari</span></div>
+        <div><b>Telefon</b><span>+971 50 123 4567</span></div>
+        <div><b>Standort</b><span>دبي، الإمارات العربية المتحدة / Dubai, UAE</span></div>
+        <div><b>Anwesenheitsdatum</b><span>2026-07-10</span></div>
+        <div><b>Untersuchungsdatum</b><span>2026-07-13</span></div>
+        <div><b>Kultur</b><span>Dattelpalme (Phoenix dactylifera)</span></div>
+      </div>
+
+      <h2>Beschreibung</h2>
+      <p class="desc">Dattelpalmen in Dubai mit Blattspitzenverbrennung und intervenaler Vergilbung. Verdacht auf K/Mg-Mangel bei Salzstress.</p>
+
+      <h2>Ergebnisse der Bodenanalyse</h2>
+      <table>
+        <thead>
+          <tr><th>Prüfparameter</th><th>Istwert</th><th>Idealwert für die Kultur</th></tr>
+        </thead>
+        <tbody><tr>
+        <td>Boden-pH</td>
+        <td class="actual">8.1</td>
+        <td class="ideal">7.0 – 8.0</td>
+      </tr>
+<tr>
+        <td>Salzgehalt EC (mS/cm)</td>
+        <td class="actual">4.1</td>
+        <td class="ideal">&lt; 4.0 (Palmentoleranz)</td>
+      </tr>
+<tr>
+        <td>Organische Substanz %</td>
+        <td class="actual">1.1%</td>
+        <td class="ideal">1.5 – 3.0%</td>
+      </tr>
+<tr>
+        <td>Stickstoff N</td>
+        <td class="actual">متوسط / Medium</td>
+        <td class="ideal">Mittel</td>
+      </tr>
+<tr>
+        <td>Phosphor P</td>
+        <td class="actual">متوسط / Medium</td>
+        <td class="ideal">Mittel</td>
+      </tr>
+<tr>
+        <td>Kalium K</td>
+        <td class="actual">ناقص بشدة</td>
+        <td class="ideal">Hoch für Palme</td>
+      </tr>
+<tr>
+        <td>Magnesium Mg</td>
+        <td class="actual">ناقص / Deficient</td>
+        <td class="ideal">Ausreichend–Hoch</td>
+      </tr>
+<tr>
+        <td>Calcium Ca</td>
+        <td class="actual">مرتفع / High</td>
+        <td class="ideal">Ausgewogen mit K/Mg</td>
+      </tr>
+<tr>
+        <td>Eisen Fe</td>
+        <td class="actual">منخفض عند pH مرتفع</td>
+        <td class="ideal">Ausreichend</td>
+      </tr>
+<tr>
+        <td>Zink Zn</td>
+        <td class="actual">منخفض / Low</td>
+        <td class="ideal">Ausreichend</td>
+      </tr>
+<tr>
+        <td>Bor B</td>
+        <td class="actual">متوسط / Medium</td>
+        <td class="ideal">Ausreichend (Übermaß vermeiden)</td>
+      </tr>
+<tr>
+        <td>Natrium Na / SAR</td>
+        <td class="actual">مرتفع</td>
+        <td class="ideal">Niedrig–Mittel</td>
+      </tr>
+<tr>
+        <td>Beckendrainage</td>
+        <td class="actual">متوسط–ضعيف</td>
+        <td class="ideal">Gute tiefe Drainage</td>
+      </tr></tbody>
+      </table>
+
+      <h2>Abschlussbericht &amp; Empfehlungen</h2>
+      <p class="final">Zusammenfassung: K- und Mg-Mangel bei hohem Salzgehalt und alkalischem pH. Empfehlungen: Kalium- + Magnesiumdünger, Drainage verbessern, tiefe seltene Bewässerung, leichte organische Substanz, ggf. cheliertes Fe/Zn, monatliche EC-Kontrolle.</p>
+
+      <footer class="sign-row">
+        <div class="sign-box">
+          <div class="sign-line"></div>
+          <div><b>Unterschrift des Ingenieurs</b></div>
+          <div>Ing. Alaa Ahmad Almasri</div>
+        </div>
+        <div class="stamp-box">
+          <div class="stamp-circle">Stempel</div>
+          <div class="hint">Anzeigebeispiel — Unterschrift &amp; Stempel gemäß Berichtseinstellungen der Website</div>
+        </div>
+      </footer>
+    </section>
+  </div>
+  <script>
+    const panels = [...document.querySelectorAll('.panel')];
+    const buttons = [...document.querySelectorAll('.langs button')];
+    function show(lang) {
+      panels.forEach(p => { p.hidden = p.dataset.lang !== lang; });
+      buttons.forEach(b => b.classList.toggle('active', b.dataset.set === lang));
+      document.documentElement.lang = lang;
+      document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+    }
+    buttons.forEach(b => b.addEventListener('click', () => show(b.dataset.set)));
+    show('ar');
+  </script>
+</body>
+</html>

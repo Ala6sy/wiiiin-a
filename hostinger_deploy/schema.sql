@@ -85,12 +85,13 @@ INSERT IGNORE INTO `site_settings` (`id`) VALUES (1);
 -- 3. SKILLS
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `skills` (
-  `id`         VARCHAR(36)       NOT NULL,
-  `name`       VARCHAR(120)      NOT NULL,
-  `percent`    TINYINT UNSIGNED  NOT NULL DEFAULT 50,
-  `icon`       TEXT              DEFAULT NULL,
-  `size`       SMALLINT UNSIGNED DEFAULT 40,
-  `sort_order` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  `id`             VARCHAR(36)       NOT NULL,
+  `name`           VARCHAR(120)      NOT NULL,
+  `percent`        TINYINT UNSIGNED  NOT NULL DEFAULT 50,
+  `icon`           TEXT              DEFAULT NULL,
+  `size`           SMALLINT UNSIGNED DEFAULT 40,
+  `show_on_about`  TINYINT(1)        NOT NULL DEFAULT 1,
+  `sort_order`     SMALLINT UNSIGNED NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -110,6 +111,12 @@ CREATE TABLE IF NOT EXISTS `web_projects` (
   `github_visible` TINYINT(1)   NOT NULL DEFAULT 1,
   `tags`           JSON         NOT NULL DEFAULT (JSON_ARRAY()),
   `thumb_size`     SMALLINT UNSIGNED DEFAULT 220,
+  `google_play_url` TEXT DEFAULT NULL,
+  `apple_store_url` TEXT DEFAULT NULL,
+  `text_color`     VARCHAR(24) DEFAULT NULL,
+  `img_bg_color`   VARCHAR(24) DEFAULT NULL,
+  `google_play_visible` TINYINT(1) NOT NULL DEFAULT 1,
+  `apple_store_visible` TINYINT(1) NOT NULL DEFAULT 1,
   `position_index` SMALLINT UNSIGNED DEFAULT 0,
   `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -132,6 +139,31 @@ CREATE TABLE IF NOT EXISTS `code_snippets` (
   `position_index` SMALLINT UNSIGNED DEFAULT 0,
   `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ------------------------------------------------------------
+-- 5b. LAB VISITOR SUBMISSIONS (pending approval)
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `lab_submissions` (
+  `id`                   VARCHAR(36)  NOT NULL,
+  `client_id`            VARCHAR(64)  NOT NULL,
+  `visitor_name`         VARCHAR(120) DEFAULT NULL,
+  `visitor_contact`      VARCHAR(200) DEFAULT NULL,
+  `title`                VARCHAR(200) NOT NULL DEFAULT '',
+  `description`          TEXT         DEFAULT NULL,
+  `code_html`            LONGTEXT     DEFAULT NULL,
+  `code_css`             LONGTEXT     DEFAULT NULL,
+  `code_js`              LONGTEXT     DEFAULT NULL,
+  `category`             VARCHAR(80)  DEFAULT NULL,
+  `status`               ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+  `admin_note`           TEXT         DEFAULT NULL,
+  `approved_snippet_id`  VARCHAR(36)  DEFAULT NULL,
+  `created_at`           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `reviewed_at`          DATETIME     DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_status` (`status`),
+  KEY `idx_client_id` (`client_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -214,7 +246,12 @@ CREATE TABLE IF NOT EXISTS `agri_videos` (
   `id`             VARCHAR(36) NOT NULL,
   `title`          JSON        NOT NULL DEFAULT (JSON_OBJECT('ar','','en','','de','')),
   `url`            TEXT        NOT NULL,
+  `poster`         TEXT        DEFAULT NULL,
+  `poster_time_sec` DOUBLE     DEFAULT NULL,
   `visible`        TINYINT(1)  NOT NULL DEFAULT 1,
+  `autoplay`       TINYINT(1)  NOT NULL DEFAULT 0,
+  `loop_play`      TINYINT(1)  NOT NULL DEFAULT 1,
+  `muted`          TINYINT(1)  NOT NULL DEFAULT 0,
   `position_index` SMALLINT UNSIGNED DEFAULT 0,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -515,6 +552,10 @@ ALTER TABLE `site_settings`
 ALTER TABLE `site_settings`
   ADD COLUMN IF NOT EXISTS `grid_settings` JSON DEFAULT NULL AFTER `library_view`;
 
+-- ── site_settings: طلب GPS الدقيق من الزائر ───────────────
+ALTER TABLE `site_settings`
+  ADD COLUMN IF NOT EXISTS `visitor_gps_prompt_enabled` TINYINT(1) NOT NULL DEFAULT 0 AFTER `grid_settings`;
+
 -- ── skills: تأكيد sort_order ────────────────────────────────
 ALTER TABLE `skills`
   MODIFY COLUMN `sort_order` SMALLINT UNSIGNED NOT NULL DEFAULT 0;
@@ -522,6 +563,10 @@ ALTER TABLE `skills`
 -- ── skills: إضافة size إن لم تكن موجودة ────────────────────
 ALTER TABLE `skills`
   ADD COLUMN IF NOT EXISTS `size` SMALLINT UNSIGNED DEFAULT 40 AFTER `icon`;
+
+-- ── skills: إظهار/إخفاء في صفحة السيرة ─────────────────────
+ALTER TABLE `skills`
+  ADD COLUMN IF NOT EXISTS `show_on_about` TINYINT(1) NOT NULL DEFAULT 1 AFTER `size`;
 
 ALTER TABLE `cv_sections`
   ADD COLUMN IF NOT EXISTS `skill_ids` JSON DEFAULT NULL AFTER `page_break_before`;
@@ -544,6 +589,13 @@ ALTER TABLE `article_categories`
 ALTER TABLE `library_books`
   ADD COLUMN IF NOT EXISTS `preview_url` TEXT      DEFAULT NULL AFTER `drive_url`,
   ADD COLUMN IF NOT EXISTS `is_paid`     TINYINT(1) NOT NULL DEFAULT 0 AFTER `preview_url`;
+
+-- ── report_template: توسيع حقول الصور (التوقيع قد يتجاوز 64KB كـ base64) ──
+ALTER TABLE `report_template`
+  MODIFY COLUMN `header_logo`   MEDIUMTEXT DEFAULT NULL,
+  MODIFY COLUMN `eng_signature` MEDIUMTEXT DEFAULT NULL,
+  MODIFY COLUMN `eng_stamp`     MEDIUMTEXT DEFAULT NULL,
+  MODIFY COLUMN `paid_stamp`    MEDIUMTEXT DEFAULT NULL;
 
 -- ── report_template: إضافة eng_name و eng_title و currency ──
 ALTER TABLE `report_template`
@@ -628,15 +680,36 @@ CREATE TABLE IF NOT EXISTS `analytics_sessions` (
   `first_seen` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `last_seen` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `page_views` INT UNSIGNED NOT NULL DEFAULT 0,
+  `zip` VARCHAR(20) DEFAULT NULL,
+  `isp` VARCHAR(120) DEFAULT NULL,
+  `timezone` VARCHAR(64) DEFAULT NULL,
+  `geo_source` VARCHAR(24) DEFAULT NULL,
+  `client_timezone` VARCHAR(64) DEFAULT NULL,
+  `gps_latitude` DECIMAL(9,6) DEFAULT NULL,
+  `gps_longitude` DECIMAL(9,6) DEFAULT NULL,
+  `gps_city` VARCHAR(120) DEFAULT NULL,
+  `gps_region` VARCHAR(120) DEFAULT NULL,
+  `gps_country` VARCHAR(80) DEFAULT NULL,
+  `gps_accuracy` DECIMAL(8,2) DEFAULT NULL,
+  `gps_consent_at` DATETIME DEFAULT NULL,
+  `device_type` VARCHAR(24) DEFAULT NULL,
+  `device_name` VARCHAR(160) DEFAULT NULL,
+  `browser` VARCHAR(64) DEFAULT NULL,
+  `os` VARCHAR(64) DEFAULT NULL,
+  `screen_size` VARCHAR(32) DEFAULT NULL,
+  `current_path` VARCHAR(255) DEFAULT NULL,
+  `current_page_since` DATETIME DEFAULT NULL,
+  `last_page_duration` INT UNSIGNED DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_last_seen` (`last_seen`),
-  KEY `idx_country` (`country_code`)
+  KEY `idx_country` (`country_code`),
+  KEY `idx_gps_consent` (`gps_consent_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `analytics_events` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `session_id` VARCHAR(36) NOT NULL,
-  `event_type` ENUM('page_view','cv_download','file_download','heartbeat') NOT NULL,
+  `event_type` ENUM('page_view','page_duration','cv_download','file_download','heartbeat') NOT NULL,
   `path` VARCHAR(255) DEFAULT NULL,
   `label` VARCHAR(255) DEFAULT NULL,
   `meta` JSON DEFAULT NULL,

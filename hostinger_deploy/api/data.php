@@ -83,7 +83,28 @@ if ($method === 'GET' && isset($_GET['test'])) {
 
 // ═══════════════════════════════════════════════════════════════
 // GET — تجميع جميع الجداول وإرجاعها كـ AppData
+// GET ?section=siteSettings — إعدادات الثيم فقط (خفيف للتحديث الفوري للزوار)
 // ═══════════════════════════════════════════════════════════════
+if ($method === 'GET' && ($_GET['section'] ?? '') === 'siteSettings') {
+    try {
+        ensureVisitorGpsPromptColumn($pdo);
+        $ss = $pdo->query("SELECT * FROM site_settings WHERE id=1")->fetch();
+        if (!$ss || !($ss['is_seeded'] ?? 0)) {
+            echo json_encode(['ok' => false, 'dbIsSeeded' => false], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        echo json_encode([
+            'ok'           => true,
+            'dbIsSeeded'   => true,
+            'siteSettings' => buildSiteSettingsFromRow($ss),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
 if ($method === 'GET') {
     try {
         echo json_encode(buildAppData($pdo), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -194,37 +215,127 @@ function genId(): string
 }
 
 // ═══════════════════════════════════════════════════════════════
+// buildSiteSettingsFromRow — إعدادات الموقع + حقول الثيم الموسّعة
+// ═══════════════════════════════════════════════════════════════
+function readSiteThemeExtras(array $ss): array
+{
+    $gs = jd($ss['grid_settings'] ?? null, []);
+    $t  = is_array($gs['siteTheme'] ?? null) ? $gs['siteTheme'] : [];
+    $kind = $t['aboutHeroKind'] ?? 'auto';
+    if ($kind !== 'image' && $kind !== 'video') $kind = 'auto';
+    return [
+        'menuTextColor'    => (string)($t['menuTextColor']    ?? ''),
+        'siteFontFamily'   => (string)($t['siteFontFamily']   ?? 'Tajawal'),
+        'baseFontSize'     => (int)($t['baseFontSize']        ?? 16),
+        'bodyTextColor'    => (string)($t['bodyTextColor']    ?? ''),
+        'headingTextColor' => (string)($t['headingTextColor'] ?? ''),
+        'mutedTextColor'   => (string)($t['mutedTextColor']   ?? ''),
+        'buttonBgColor'    => (string)($t['buttonBgColor']    ?? ''),
+        'buttonTextColor'  => (string)($t['buttonTextColor']  ?? ''),
+        'gfxFreeDownloadBtnColor' => (string)($t['gfxFreeDownloadBtnColor'] ?? ''),
+        'aboutHeroMedia'   => (string)($t['aboutHeroMedia']   ?? ''),
+        'aboutHeroKind'    => $kind,
+        'aboutNameBadgeVisible' => !array_key_exists('aboutNameBadgeVisible', $t) || !empty($t['aboutNameBadgeVisible']),
+        'aboutNameBadgeBottomDesktop' => max(-600, min(600, (int)($t['aboutNameBadgeBottomDesktop'] ?? 22))),
+        'aboutNameBadgeBottomMobile'  => max(-600, min(600, (int)($t['aboutNameBadgeBottomMobile'] ?? 8))),
+        'aboutNameBadgePadY'          => max(2, min(24, (int)($t['aboutNameBadgePadY'] ?? 6))),
+        'homeIntroVideo'              => (string)($t['homeIntroVideo'] ?? ''),
+        'reportGalleryShowCustomerName' => !array_key_exists('reportGalleryShowCustomerName', $t) || !empty($t['reportGalleryShowCustomerName']),
+        'reportGalleryColsMobile'  => max(1, min(4, (int)($t['reportGalleryColsMobile'] ?? 2))),
+        'reportGalleryColsDesktop' => max(1, min(6, (int)($t['reportGalleryColsDesktop'] ?? 3))),
+    ];
+}
+
+/** طلب GPS الدقيق — عمود DB أو نسخة احتياطية داخل grid_settings */
+function readVisitorGpsPromptEnabled(array $ss): bool
+{
+    if (array_key_exists('visitor_gps_prompt_enabled', $ss)) {
+        return (int)($ss['visitor_gps_prompt_enabled'] ?? 0) === 1;
+    }
+    $gs = jd($ss['grid_settings'] ?? null, []);
+    $t  = is_array($gs['siteTheme'] ?? null) ? $gs['siteTheme'] : [];
+    return !empty($t['visitorGpsPromptEnabled']);
+}
+
+function ensureVisitorGpsPromptColumn(PDO $db): void
+{
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    try {
+        $col = $db->query("SHOW COLUMNS FROM site_settings LIKE 'visitor_gps_prompt_enabled'")->fetch();
+        if (!$col) {
+            $db->exec("ALTER TABLE site_settings ADD COLUMN visitor_gps_prompt_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER grid_settings");
+        }
+    } catch (Throwable $e) { /* ignore */ }
+}
+
+function ensureWebProjectColumns(PDO $db): void
+{
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    $alters = [
+        "google_play_url TEXT DEFAULT NULL AFTER thumb_size",
+        "apple_store_url TEXT DEFAULT NULL AFTER google_play_url",
+        "text_color VARCHAR(24) DEFAULT NULL AFTER apple_store_url",
+        "img_bg_color VARCHAR(24) DEFAULT NULL AFTER text_color",
+        "google_play_visible TINYINT(1) NOT NULL DEFAULT 1 AFTER img_bg_color",
+        "apple_store_visible TINYINT(1) NOT NULL DEFAULT 1 AFTER google_play_visible",
+    ];
+    try {
+        foreach ($alters as $def) {
+            $name = trim(explode(' ', $def)[0]);
+            $col = $db->query("SHOW COLUMNS FROM web_projects LIKE " . $db->quote($name))->fetch();
+            if (!$col) {
+                $db->exec("ALTER TABLE web_projects ADD COLUMN {$def}");
+            }
+        }
+    } catch (Throwable $e) { /* ignore */ }
+}
+
+function buildSiteSettingsFromRow(array $ss): array
+{
+    $extras = readSiteThemeExtras($ss);
+    return array_merge([
+        'logoType'       => $ss['logo_type']       ?? 'svg_alaa',
+        'logoImg'        => $ss['logo_img']         ?? '',
+        'logoText'       => jd($ss['logo_text']     ?? null, ['ar'=>'','en'=>'','de'=>'']),
+        'logoColor'      => $ss['logo_color']       ?? '',
+        'footerBg'       => $ss['footer_bg']        ?? '#001529',
+        'footerText'     => jd($ss['footer_text']   ?? null, ['ar'=>'','en'=>'','de'=>'']),
+        'socialLinks'    => jd($ss['social_links']  ?? null, []),
+        'navItems'       => jd($ss['nav_items']     ?? null, []),
+        'themeMode'      => $ss['theme_mode']       ?? 'dark',
+        'accentColor'    => $ss['accent_color']     ?? '#003366',
+        'glassOpacity'   => (float)($ss['glass_opacity'] ?? 0.5),
+        'threeScriptUrl' => $ss['three_script_url'] ?? '',
+        'visitorGpsPromptEnabled' => readVisitorGpsPromptEnabled($ss),
+    ], $extras);
+}
+
+// ═══════════════════════════════════════════════════════════════
 // buildAppData — بناء AppData من قاعدة البيانات
 // ═══════════════════════════════════════════════════════════════
 function buildAppData(PDO $db): array
 {
     // ── site_settings (صف واحد id=1) ─────────────────────────
+    ensureVisitorGpsPromptColumn($db);
     $ss = $db->query("SELECT * FROM site_settings WHERE id=1")->fetch() ?: [];
     $dbIsSeeded = (bool)($ss['is_seeded'] ?? 0);
-    $siteSettings = [
-        'logoType'      => $ss['logo_type']       ?? 'svg_alaa',
-        'logoImg'       => $ss['logo_img']         ?? '',
-        'logoText'      => jd($ss['logo_text']     ?? null, ['ar'=>'','en'=>'','de'=>'']),
-        'logoColor'     => $ss['logo_color']       ?? null,
-        'footerBg'      => $ss['footer_bg']        ?? '#001529',
-        'footerText'    => jd($ss['footer_text']   ?? null, ['ar'=>'','en'=>'','de'=>'']),
-        'socialLinks'   => jd($ss['social_links']  ?? null, []),
-        'navItems'      => jd($ss['nav_items']     ?? null, []),
-        'themeMode'     => $ss['theme_mode']       ?? 'dark',
-        'accentColor'   => $ss['accent_color']     ?? '#003366',
-        'glassOpacity'  => (float)($ss['glass_opacity']   ?? 0.5),
-        'threeScriptUrl'=> $ss['three_script_url'] ?? null,
-    ];
+    $siteSettings = buildSiteSettingsFromRow($ss);
 
     // ── skills ───────────────────────────────────────────────
+    ensureSkillsShowOnAboutColumn($db);
     $skills = [];
     foreach ($db->query("SELECT * FROM skills ORDER BY sort_order, id")->fetchAll() as $r) {
         $skills[] = [
-            'id'      => $r['id'],
-            'name'    => $r['name'],
-            'percent' => (int)$r['percent'],
-            'icon'    => $r['icon'] ?? '',
-            'size'    => (int)($r['size'] ?? 40),
+            'id'          => $r['id'],
+            'name'        => $r['name'],
+            'percent'     => (int)$r['percent'],
+            'icon'        => $r['icon'] ?? '',
+            'size'        => (int)($r['size'] ?? 40),
+            'showOnAbout' => !isset($r['show_on_about']) || (int)$r['show_on_about'] !== 0,
         ];
     }
 
@@ -288,13 +399,20 @@ function buildAppData(PDO $db): array
     }
 
     // ── agri_videos ───────────────────────────────────────────
+    ensureAgriVideosExtraColumns($db);
     $agriVideos = [];
     foreach ($db->query("SELECT * FROM agri_videos ORDER BY position_index, id")->fetchAll() as $r) {
         $agriVideos[] = [
-            'id'      => $r['id'],
-            'title'   => jd($r['title'], ['ar'=>'','en'=>'','de'=>'']),
-            'url'     => $r['url'],
-            'visible' => (bool)$r['visible'],
+            'id'            => $r['id'],
+            'title'         => jd($r['title'], ['ar'=>'','en'=>'','de'=>'']),
+            'url'           => $r['url'],
+            'poster'        => (string)($r['poster'] ?? ''),
+            'posterTimeSec' => isset($r['poster_time_sec']) && $r['poster_time_sec'] !== null
+                ? (float)$r['poster_time_sec'] : null,
+            'visible'       => (bool)$r['visible'],
+            'autoplay'      => !empty($r['autoplay']),
+            'loop'          => !array_key_exists('loop_play', $r) || !empty($r['loop_play']),
+            'muted'         => !empty($r['muted']),
         ];
     }
 
@@ -318,8 +436,8 @@ function buildAppData(PDO $db): array
     foreach ($db->query("SELECT * FROM code_snippets ORDER BY position_index, created_at")->fetchAll() as $r) {
         $softwareSnippets[] = [
             'id'       => $r['id']          ?? null,
-            'title'    => $r['title']       ?? '',
-            'desc'     => $r['description'] ?? '',
+            'title'    => jd($r['title'],       ['ar'=>'','en'=>'','de'=>'']),
+            'desc'     => jd($r['description'], ['ar'=>'','en'=>'','de'=>'']),
             'codeHtml' => $r['code_html']   ?? '',
             'codeCss'  => $r['code_css']    ?? '',
             'codeJs'   => $r['code_js']     ?? '',
@@ -328,20 +446,27 @@ function buildAppData(PDO $db): array
     }
 
     // ── web_projects ─────────────────────────────────────────
+    ensureWebProjectColumns($db);
     $webProjects = [];
     foreach ($db->query("SELECT * FROM web_projects ORDER BY position_index, created_at")->fetchAll() as $r) {
         $webProjects[] = [
-            'id'            => $r['id'],
-            'title'         => jd($r['title'],       ['ar'=>'','en'=>'','de'=>'']),
-            'desc'          => jd($r['description'], ['ar'=>'','en'=>'','de'=>'']),
-            'mainImg'       => $r['main_img']        ?? '',
-            'images'        => jd($r['images'],      []),
-            'videoUrl'      => $r['video_url']       ?? '',
-            'liveUrl'       => $r['live_url']        ?? '',
-            'githubUrl'     => $r['github_url']      ?? '',
-            'githubVisible' => (bool)($r['github_visible'] ?? 1),
-            'tags'          => jd($r['tags'],         []),
-            'thumbSize'     => (int)($r['thumb_size'] ?? 220),
+            'id'                => $r['id'],
+            'title'             => jd($r['title'],       ['ar'=>'','en'=>'','de'=>'']),
+            'desc'              => jd($r['description'], ['ar'=>'','en'=>'','de'=>'']),
+            'mainImg'           => $r['main_img']        ?? '',
+            'images'            => jd($r['images'],      []),
+            'videoUrl'          => $r['video_url']       ?? '',
+            'liveUrl'           => $r['live_url']        ?? '',
+            'githubUrl'         => $r['github_url']      ?? '',
+            'githubVisible'     => (bool)($r['github_visible'] ?? 1),
+            'tags'              => jd($r['tags'],         []),
+            'thumbSize'         => (int)($r['thumb_size'] ?? 220),
+            'googlePlayUrl'     => $r['google_play_url']     ?? '',
+            'appleStoreUrl'     => $r['apple_store_url']     ?? '',
+            'textColor'         => $r['text_color']          ?? '',
+            'imgBgColor'        => $r['img_bg_color']        ?? '',
+            'googlePlayVisible' => (bool)($r['google_play_visible'] ?? 1),
+            'appleStoreVisible' => (bool)($r['apple_store_visible'] ?? 1),
         ];
     }
 
@@ -382,9 +507,9 @@ function buildAppData(PDO $db): array
         $customerReports[] = [
             'id'               => $r['id'],
             'reportType'       => $r['report_type']        ?? 'soil',
-            'customerName'     => $r['customer_name']      ?? '',
+            'customerName'     => readMLField($r['customer_name']      ?? ''),
             'customerPhone'    => $r['customer_phone']     ?? '',
-            'customerLocation' => $r['customer_location']  ?? '',
+            'customerLocation' => readMLField($r['customer_location']  ?? ''),
             'attendanceDate'   => $r['attendance_date']    ?? '',
             'examDate'         => $r['exam_date']          ?? '',
             'images'           => jd($r['images'],         []),
@@ -463,6 +588,7 @@ function buildAppData(PDO $db): array
         'articleGridSettings'  => $gs['articleGridSettings'] ?? null,
         'gfxGridSettings'      => $gs['gfxGridSettings'] ?? null,
         'webGridSettings'      => $gs['webGridSettings'] ?? null,
+        'agriWalkthrough'      => $gs['agriWalkthrough'] ?? null,
 
         // بيانات الموقع
         'siteSettings'         => $siteSettings,
@@ -513,8 +639,9 @@ function buildNodeTree(array $flat, ?string $parentId): array
 function gfxItemMetaKeys(): array
 {
     return [
-        'mainImgNoWm', 'imagesNoWm',
-        'glbUrl', 'glbIsPaid', 'glbPrice', 'glbCurrency', 'glbFreeUrl',
+        'mainImgNoWm', 'mainImgIsVideo', 'imagesNoWm', 'imagesIsVideo',
+        'glbUrl', 'glbIsPaid', 'glbPrice', 'glbCurrency', 'glbFreeUrl', 'glbViewSettings',
+        'downloadLinks',
         'sourceFileUrl', 'sourceFileVisible', 'sourceFilePassword', 'sourceFileLabel',
     ];
 }
@@ -539,8 +666,20 @@ function gfxItemMetaToJson(array $item): string
         $v = $item[$k];
         if ($v === null || $v === '') continue;
         if ($k === 'sourceFileVisible' && $v === true) continue; // default visible
-        if (in_array($k, ['mainImgNoWm', 'glbIsPaid', 'sourceFileVisible'], true) && !$v) {
+        if (in_array($k, ['mainImgNoWm', 'mainImgIsVideo', 'glbIsPaid', 'sourceFileVisible'], true) && !$v) {
             $meta[$k] = false;
+            continue;
+        }
+        if ($k === 'imagesIsVideo' && is_array($v)) {
+            $meta[$k] = array_values($v);
+            continue;
+        }
+        if ($k === 'glbViewSettings' && is_array($v)) {
+            $meta[$k] = $v;
+            continue;
+        }
+        if ($k === 'downloadLinks' && is_array($v)) {
+            $meta[$k] = array_values($v);
             continue;
         }
         $meta[$k] = $v;
@@ -732,7 +871,9 @@ function syncAppData(PDO $db, array $d): void
 // ── site_settings ─────────────────────────────────────────────
 function syncSiteSettings(PDO $db, array $d): void
 {
+    ensureVisitorGpsPromptColumn($db);
     $ss = $d['siteSettings'] ?? [];
+    $visitorGpsEnabled = !empty($ss['visitorGpsPromptEnabled']) ? 1 : 0;
     $db->prepare("
         UPDATE site_settings SET
           logo_type            = ?, logo_img          = ?, logo_text         = ?,
@@ -746,6 +887,7 @@ function syncSiteSettings(PDO $db, array $d): void
           name_logo_color      = ?, name_shimmer_speed = ?, name_shimmer_color = ?, name_shimmer_angle = ?, name_shimmer_motion = ?,
           name_shimmer_direction = ?, name_shimmer_width = ?,
           grid_settings        = ?,
+          visitor_gps_prompt_enabled = ?,
           is_seeded            = 1
         WHERE id = 1
     ")->execute([
@@ -785,11 +927,37 @@ function syncSiteSettings(PDO $db, array $d): void
             'articleGridSettings' => $d['articleGridSettings'] ?? null,
             'gfxGridSettings'  => $d['gfxGridSettings'] ?? null,
             'webGridSettings'  => $d['webGridSettings'] ?? null,
+            'agriWalkthrough'  => $d['agriWalkthrough'] ?? null,
             'cvPlacements'     => [
                 'agri'   => $d['agriCvPlacements']   ?? null,
                 'design' => $d['designCvPlacements'] ?? null,
             ],
+            'siteTheme' => [
+                'menuTextColor'    => $ss['menuTextColor']    ?? '',
+                'siteFontFamily'   => $ss['siteFontFamily']   ?? 'Tajawal',
+                'baseFontSize'     => (int)($ss['baseFontSize'] ?? 16),
+                'bodyTextColor'    => $ss['bodyTextColor']    ?? '',
+                'headingTextColor' => $ss['headingTextColor'] ?? '',
+                'mutedTextColor'   => $ss['mutedTextColor']   ?? '',
+                'buttonBgColor'    => $ss['buttonBgColor']    ?? '',
+                'buttonTextColor'  => $ss['buttonTextColor']  ?? '',
+                'gfxFreeDownloadBtnColor' => $ss['gfxFreeDownloadBtnColor'] ?? '',
+                'visitorGpsPromptEnabled' => $visitorGpsEnabled === 1,
+                'aboutHeroMedia'   => (string)($ss['aboutHeroMedia'] ?? ''),
+                'aboutHeroKind'    => in_array(($ss['aboutHeroKind'] ?? 'auto'), ['auto', 'image', 'video'], true)
+                    ? ($ss['aboutHeroKind'] ?? 'auto')
+                    : 'auto',
+                'aboutNameBadgeVisible' => !array_key_exists('aboutNameBadgeVisible', $ss) || !empty($ss['aboutNameBadgeVisible']),
+                'aboutNameBadgeBottomDesktop' => max(-600, min(600, (int)($ss['aboutNameBadgeBottomDesktop'] ?? 22))),
+                'aboutNameBadgeBottomMobile'  => max(-600, min(600, (int)($ss['aboutNameBadgeBottomMobile'] ?? 8))),
+                'aboutNameBadgePadY'          => max(2, min(24, (int)($ss['aboutNameBadgePadY'] ?? 6))),
+                'homeIntroVideo'              => (string)($ss['homeIntroVideo'] ?? ''),
+                'reportGalleryShowCustomerName' => !array_key_exists('reportGalleryShowCustomerName', $ss) || !empty($ss['reportGalleryShowCustomerName']),
+                'reportGalleryColsMobile'  => max(1, min(4, (int)($ss['reportGalleryColsMobile'] ?? 2))),
+                'reportGalleryColsDesktop' => max(1, min(6, (int)($ss['reportGalleryColsDesktop'] ?? 3))),
+            ],
         ]),
+        $visitorGpsEnabled,
     ]);
 }
 
@@ -815,8 +983,24 @@ function syncPersonalInfo(PDO $db, array $pi): void
 }
 
 // ── skills ───────────────────────────────────────────────────
+function ensureSkillsShowOnAboutColumn(PDO $db): void
+{
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    try {
+        $col = $db->query("SHOW COLUMNS FROM skills LIKE 'show_on_about'")->fetch();
+        if (!$col) {
+            $db->exec("ALTER TABLE skills ADD COLUMN show_on_about TINYINT(1) NOT NULL DEFAULT 1 AFTER size");
+        }
+    } catch (\Throwable $e) {
+        // بدون العمود يبقى الافتراضي ظاهراً من جهة الواجهة
+    }
+}
+
 function syncSkills(PDO $db, array $skills): void
 {
+    ensureSkillsShowOnAboutColumn($db);
     $ids = array_column($skills, 'id');
     if ($ids) {
         $ph = implode(',', array_fill(0, count($ids), '?'));
@@ -825,18 +1009,21 @@ function syncSkills(PDO $db, array $skills): void
         $db->exec("DELETE FROM skills");
     }
     $stmt = $db->prepare("
-        INSERT INTO skills (id, name, percent, icon, size, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO skills (id, name, percent, icon, size, show_on_about, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE name=VALUES(name), percent=VALUES(percent),
-          icon=VALUES(icon), size=VALUES(size), sort_order=VALUES(sort_order)
+          icon=VALUES(icon), size=VALUES(size), show_on_about=VALUES(show_on_about),
+          sort_order=VALUES(sort_order)
     ");
     foreach ($skills as $i => $s) {
+        $show = !isset($s['showOnAbout']) || $s['showOnAbout'] === true || $s['showOnAbout'] === 1 || $s['showOnAbout'] === '1';
         $stmt->execute([
             $s['id']      ?? genId(),
             $s['name']    ?? '',
             (int)($s['percent'] ?? 50),
             $s['icon']    ?? '',
             (int)($s['size']    ?? 40),
+            $show ? 1 : 0,
             $i,
         ]);
     }
@@ -977,8 +1164,34 @@ function syncLibraryBooks(PDO $db, array $books): void
 }
 
 // ── agri_videos ───────────────────────────────────────────────
+function ensureAgriVideosExtraColumns(PDO $db): void
+{
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    try {
+        $cols = $db->query("SHOW COLUMNS FROM agri_videos")->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('poster', $cols, true)) {
+            $db->exec("ALTER TABLE agri_videos ADD COLUMN poster TEXT NULL AFTER url");
+        }
+        if (!in_array('poster_time_sec', $cols, true)) {
+            $db->exec("ALTER TABLE agri_videos ADD COLUMN poster_time_sec DOUBLE NULL AFTER poster");
+        }
+        if (!in_array('autoplay', $cols, true)) {
+            $db->exec("ALTER TABLE agri_videos ADD COLUMN autoplay TINYINT(1) NOT NULL DEFAULT 0 AFTER visible");
+        }
+        if (!in_array('loop_play', $cols, true)) {
+            $db->exec("ALTER TABLE agri_videos ADD COLUMN loop_play TINYINT(1) NOT NULL DEFAULT 1 AFTER autoplay");
+        }
+        if (!in_array('muted', $cols, true)) {
+            $db->exec("ALTER TABLE agri_videos ADD COLUMN muted TINYINT(1) NOT NULL DEFAULT 0 AFTER loop_play");
+        }
+    } catch (Throwable $e) { /* ignore */ }
+}
+
 function syncAgriVideos(PDO $db, array $videos): void
 {
+    ensureAgriVideosExtraColumns($db);
     $ids = array_column($videos, 'id');
     if ($ids) {
         $ph = implode(',', array_fill(0, count($ids), '?'));
@@ -987,18 +1200,27 @@ function syncAgriVideos(PDO $db, array $videos): void
         $db->exec("DELETE FROM agri_videos");
     }
     $stmt = $db->prepare("
-        INSERT INTO agri_videos (id, title, url, visible, position_index)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO agri_videos (id, title, url, poster, poster_time_sec, visible, autoplay, loop_play, muted, position_index)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
-          title=VALUES(title), url=VALUES(url), visible=VALUES(visible),
+          title=VALUES(title), url=VALUES(url), poster=VALUES(poster),
+          poster_time_sec=VALUES(poster_time_sec), visible=VALUES(visible),
+          autoplay=VALUES(autoplay), loop_play=VALUES(loop_play), muted=VALUES(muted),
           position_index=VALUES(position_index)
     ");
     foreach ($videos as $i => $v) {
+        $posterTime = $v['posterTimeSec'] ?? $v['poster_time_sec'] ?? null;
+        $loop = array_key_exists('loop', $v) ? !empty($v['loop']) : (!array_key_exists('loop_play', $v) || !empty($v['loop_play']));
         $stmt->execute([
             $v['id']  ?? genId(),
             je($v['title'] ?? ['ar'=>'','en'=>'','de'=>'']),
             $v['url']     ?? '',
+            $v['poster']  ?? '',
+            ($posterTime === null || $posterTime === '') ? null : (float)$posterTime,
             ($v['visible'] ?? true) ? 1 : 0,
+            !empty($v['autoplay']) ? 1 : 0,
+            $loop ? 1 : 0,
+            !empty($v['muted']) ? 1 : 0,
             $i,
         ]);
     }
@@ -1103,8 +1325,8 @@ function syncCodeSnippets(PDO $db, array $snippets): void
     foreach ($snippets as $i => $s) {
         $stmt->execute([
             $s['id']       ?? genId(),
-            $s['title']    ?? '',
-            $s['desc']     ?? '',
+            writeMLField($s['title'] ?? '', ''),
+            writeMLField($s['desc']  ?? '', ''),
             $s['codeHtml'] ?? '',
             $s['codeCss']  ?? '',
             $s['codeJs']   ?? '',
@@ -1117,6 +1339,7 @@ function syncCodeSnippets(PDO $db, array $snippets): void
 // ── web_projects ─────────────────────────────────────────────
 function syncWebProjects(PDO $db, array $projects): void
 {
+    ensureWebProjectColumns($db);
     $ids = array_column($projects, 'id');
     if ($ids) {
         $ph = implode(',', array_fill(0, count($ids), '?'));
@@ -1127,13 +1350,19 @@ function syncWebProjects(PDO $db, array $projects): void
     $stmt = $db->prepare("
         INSERT INTO web_projects
           (id, title, description, main_img, images, video_url, live_url,
-           github_url, github_visible, tags, thumb_size, position_index)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           github_url, github_visible, tags, thumb_size,
+           google_play_url, apple_store_url, text_color, img_bg_color,
+           google_play_visible, apple_store_visible, position_index)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           title=VALUES(title), description=VALUES(description), main_img=VALUES(main_img),
           images=VALUES(images), video_url=VALUES(video_url), live_url=VALUES(live_url),
           github_url=VALUES(github_url), github_visible=VALUES(github_visible),
-          tags=VALUES(tags), thumb_size=VALUES(thumb_size), position_index=VALUES(position_index)
+          tags=VALUES(tags), thumb_size=VALUES(thumb_size),
+          google_play_url=VALUES(google_play_url), apple_store_url=VALUES(apple_store_url),
+          text_color=VALUES(text_color), img_bg_color=VALUES(img_bg_color),
+          google_play_visible=VALUES(google_play_visible), apple_store_visible=VALUES(apple_store_visible),
+          position_index=VALUES(position_index)
     ");
     foreach ($projects as $i => $p) {
         $stmt->execute([
@@ -1148,6 +1377,12 @@ function syncWebProjects(PDO $db, array $projects): void
             ($p['githubVisible']  ?? true) ? 1 : 0,
             je($p['tags']         ?? []),
             (int)($p['thumbSize'] ?? 220),
+            $p['googlePlayUrl']   ?? '',
+            $p['appleStoreUrl']   ?? '',
+            $p['textColor']       ?? '',
+            $p['imgBgColor']      ?? '',
+            ($p['googlePlayVisible'] ?? true) ? 1 : 0,
+            ($p['appleStoreVisible'] ?? true) ? 1 : 0,
             $i,
         ]);
     }
@@ -1345,9 +1580,9 @@ function syncCustomerReports(PDO $db, array $reports): void
         $stmt->execute([
             $r['id']               ?? genId(),
             $r['reportType']       ?? 'soil',
-            $r['customerName']     ?? '',
+            writeMLField($r['customerName'] ?? ''),
             $r['customerPhone']    ?? '',
-            $r['customerLocation'] ?? '',
+            writeMLField($r['customerLocation'] ?? ''),
             $r['attendanceDate']   ?: null,
             $r['examDate']         ?: null,
             je($r['images']        ?? []),

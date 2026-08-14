@@ -8,6 +8,7 @@ import {
   harvestForVisitorLocation,
   seasonGuideText,
   locationLabel,
+  ensureLocationInLang,
   type VisitorGpsLocation,
 } from './visitorLocation';
 import { groupPlantsByCategory } from './plantCategories';
@@ -131,6 +132,19 @@ export function SeasonNowPanel({ data, lang, active }: { data: AppData; lang: La
       loadWeather(stored);
     }
   }, [active, loadWeather]);
+
+  /* ترجمة اسم المنطقة حسب لغة الواجهة (EN/DE لا تبقي عجمان بالعربية) */
+  useEffect(() => {
+    if (!loc || !active) return;
+    let cancelled = false;
+    void ensureLocationInLang(loc, lang).then(next => {
+      if (cancelled) return;
+      if (next !== loc && JSON.stringify(next.labels) !== JSON.stringify(loc.labels)) {
+        setLoc(next);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [loc, lang, active]);
 
   const weatherInput = weather
     ? { temperature: weather.temperature, humidity: weather.humidity, windSpeed: weather.windSpeed }

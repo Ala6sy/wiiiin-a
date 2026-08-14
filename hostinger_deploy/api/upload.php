@@ -33,7 +33,7 @@ if (empty($_FILES['file'])) {
     die(json_encode(['error' => 'No file uploaded']));
 }
 
-$allowedFolders = ['projects', 'books', 'reports', 'gfx', 'general', 'skills', 'skill', 'cv'];
+$allowedFolders = ['projects', 'books', 'reports', 'gfx', 'general', 'skills', 'skill', 'cv', 'walkthrough'];
 $folder  = preg_replace('/[^a-z0-9_]/', '', strtolower($_POST['folder'] ?? 'general'));
 if (!in_array($folder, $allowedFolders, true)) $folder = 'general';
 
@@ -52,15 +52,35 @@ if ($file['error'] !== UPLOAD_ERR_OK) {
 $allowed = [
     'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
     'image/gif', 'image/svg+xml', 'application/pdf',
+    'video/webm', 'video/mp4', 'video/quicktime', 'video/ogg',
+    'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav',
+    'audio/ogg', 'audio/webm', 'audio/mp4', 'audio/x-m4a', 'audio/aac',
+    'application/octet-stream', // بعض السيرفرات تُرجع webm هكذا
 ];
 $mimeActual = mime_content_type($file['tmp_name']);
-if (!in_array($mimeActual, $allowed, true)) {
+$extCheck = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+$videoExts = ['webm', 'mp4', 'mov', 'm4v', 'ogv', 'ogg'];
+$audioExts = ['mp3', 'wav', 'm4a', 'aac', 'oga', 'opus'];
+$isVideoUpload = in_array($extCheck, $videoExts, true)
+    || str_starts_with((string)$mimeActual, 'video/');
+$isAudioUpload = in_array($extCheck, $audioExts, true)
+    || str_starts_with((string)$mimeActual, 'audio/');
+
+if (!in_array($mimeActual, $allowed, true) && !(($isVideoUpload || $isAudioUpload) && $mimeActual === 'application/octet-stream')) {
     http_response_code(415);
     die(json_encode(['error' => 'File type not allowed: ' . $mimeActual]));
 }
-if ($file['size'] > MAX_UPLOAD_BYTES) {
+
+$maxBytes = defined('MAX_UPLOAD_BYTES') ? MAX_UPLOAD_BYTES : (5 * 1024 * 1024);
+if ($isVideoUpload) {
+    $maxBytes = max($maxBytes, 40 * 1024 * 1024); // فيديو/WebM حتى 40MB
+}
+if ($isAudioUpload) {
+    $maxBytes = max($maxBytes, 20 * 1024 * 1024); // تعليق صوتي حتى 20MB
+}
+if ($file['size'] > $maxBytes) {
     http_response_code(413);
-    die(json_encode(['error' => 'File too large (max 5 MB)']));
+    die(json_encode(['error' => 'File too large (max ' . round($maxBytes / 1024 / 1024) . ' MB)']));
 }
 
 $ext     = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));

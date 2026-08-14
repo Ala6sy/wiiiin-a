@@ -1,7 +1,7 @@
 /**
  * تصنيفات افتراضية مدمجة — مقالات + معرض التصاميم
  */
-import type { ArticleCategory, GfxCategory, ML } from './appData';
+import type { ArticleCategory, GfxCategory, GfxSubCategory, ML } from './appData';
 
 const ml = (ar: string, en = '', de = ''): ML => ({ ar, en: en || ar, de: de || en || ar });
 
@@ -21,7 +21,8 @@ export const DEFAULT_GFX_CATEGORIES: GfxCategory[] = [
     name: ml('تصميم حدائق لاندسكيب', 'Landscape Garden Design', 'Landschaftsgartengestaltung'),
     icon: 'fa-tree',
     subCategories: [
-      { id: 'gfx-landscape-general', name: ml('عام', 'General', 'Allgemein'), items: [] },
+      { id: 'gfx-landscape-villas', name: ml('فلل', 'Villas', 'Villen'), items: [] },
+      { id: 'gfx-landscape-public', name: ml('حدائق عامة', 'Public Parks', 'Öffentliche Parks'), items: [] },
     ],
   },
   {
@@ -29,7 +30,7 @@ export const DEFAULT_GFX_CATEGORIES: GfxCategory[] = [
     name: ml('ديكور داخلي وخارجي', 'Interior & Exterior Decor', 'Innen- & Außendekor'),
     icon: 'fa-couch',
     subCategories: [
-      { id: 'gfx-decor-living', name: ml('معيشات', 'Living Rooms', 'Wohnzimmer'), items: [] },
+      { id: 'gfx-decor-living', name: ml('غرف جلوس', 'Living Rooms', 'Wohnzimmer'), items: [] },
       { id: 'gfx-decor-bedrooms', name: ml('غرف النوم', 'Bedrooms', 'Schlafzimmer'), items: [] },
       { id: 'gfx-decor-kitchens', name: ml('المطابخ', 'Kitchens', 'Küchen'), items: [] },
       { id: 'gfx-decor-buildings', name: ml('مبانٍ وفلل', 'Buildings & Villas', 'Gebäude & Villen'), items: [] },
@@ -40,9 +41,9 @@ export const DEFAULT_GFX_CATEGORIES: GfxCategory[] = [
     name: ml('مطبوعات', 'Prints', 'Drucksachen'),
     icon: 'fa-print',
     subCategories: [
-      { id: 'gfx-prints-cards', name: ml('بطاقات أعمال', 'Business Cards', 'Visitenkarten'), items: [] },
-      { id: 'gfx-prints-letterhead', name: ml('ورق رسمي', 'Letterhead', 'Briefpapier'), items: [] },
-      { id: 'gfx-prints-brochures', name: ml('كتيبات ومنشورات', 'Brochures & Flyers', 'Broschüren & Flyer'), items: [] },
+      { id: 'gfx-prints-cards', name: ml('بزنس كارد', 'Business Cards', 'Visitenkarten'), items: [] },
+      { id: 'gfx-prints-letterhead', name: ml('ليتر هيد', 'Letterhead', 'Briefpapier'), items: [] },
+      { id: 'gfx-prints-boxes', name: ml('بوكسات وتغليف', 'Boxes & Packaging', 'Boxen & Verpackung'), items: [] },
       { id: 'gfx-prints-billboards', name: ml('لوحات إعلانية', 'Billboards', 'Plakatwände'), items: [] },
       { id: 'gfx-prints-gifts', name: ml('هدايا', 'Gifts', 'Geschenke'), items: [] },
     ],
@@ -53,9 +54,9 @@ export const DEFAULT_GFX_CATEGORIES: GfxCategory[] = [
     icon: 'fa-tv',
     subCategories: [
       { id: 'gfx-screens-indoor', name: ml('شاشات داخلية', 'Indoor Screens', 'Innenbildschirme'), items: [] },
-      { id: 'gfx-screens-wall', name: ml('شاشات جدارية', 'Wall Screens', 'Wandbildschirme'), items: [] },
+      { id: 'gfx-screens-outdoor', name: ml('شاشات خارجية', 'Outdoor Screens', 'Außenbildschirme'), items: [] },
       { id: 'gfx-screens-flex', name: ml('شاشات مرنة', 'Flexible Screens', 'Flexible Displays'), items: [] },
-      { id: 'gfx-screens-hologram', name: ml('هولوغرام', 'Hologram', 'Hologramm'), items: [] },
+      { id: 'gfx-screens-kiosk', name: ml('كiosk', 'Kiosk', 'Kiosk'), items: [] },
     ],
   },
   {
@@ -155,16 +156,34 @@ export function mergeArticleCategoryDefaults(cats: ArticleCategory[]): ArticleCa
   });
 }
 
-/** دمج ترجمات التصاميم الرئيسية والفرعية من الأصل */
+/** دمج ترجمات التصاميم الرئيسية والفرعية + إضافة فروع ناقصة من الافتراضي */
+function mergeGfxSubCategories(userSubs: GfxSubCategory[], defCat: GfxCategory | undefined): GfxSubCategory[] {
+  if (!defCat) {
+    return userSubs.map(sub => {
+      const defSub = defaultGfxSubById.get(sub.id);
+      return defSub ? { ...sub, name: fillMlFromDefault(sub.name, defSub.name) } : sub;
+    });
+  }
+  const byId = new Map(userSubs.map(s => [s.id, s]));
+  const merged: GfxSubCategory[] = userSubs.map(sub => {
+    const defSub = defaultGfxSubById.get(sub.id);
+    return defSub ? { ...sub, name: fillMlFromDefault(sub.name, defSub.name) } : sub;
+  });
+  for (const defSub of defCat.subCategories) {
+    if (!byId.has(defSub.id)) {
+      merged.push({ ...defSub, name: { ...defSub.name }, items: [] });
+    }
+  }
+  return merged;
+}
+
+/** دمج ترجمات التصاميم الرئيسية والفرعية من الأصل — بدون إعادة ملء المشاريع تلقائياً */
 export function mergeGfxCategoryDefaults(cats: GfxCategory[]): GfxCategory[] {
   if (!cats.length) return cloneDefaultGfx();
   return cats.map(cat => {
     const defCat = defaultGfxById.get(cat.id);
     const name = defCat ? fillMlFromDefault(cat.name, defCat.name) : cat.name;
-    const subCategories = cat.subCategories.map(sub => {
-      const defSub = defaultGfxSubById.get(sub.id);
-      return defSub ? { ...sub, name: fillMlFromDefault(sub.name, defSub.name) } : sub;
-    });
+    const subCategories = mergeGfxSubCategories(cat.subCategories, defCat);
     return { ...cat, name, subCategories };
   });
 }

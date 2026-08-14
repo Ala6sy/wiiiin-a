@@ -10,6 +10,14 @@ import { PASTURE_FORESTRY } from './pastureForestryPlants';
 import { formatWesternNum } from './formatLocale';
 
 const LOC_KEY = '__visitor_gps__';
+const LOC_DECISION_KEY = '__visitor_gps_decision__';
+
+export interface VisitorPlaceParts {
+  city?: string;
+  region?: string;
+  country?: string;
+  displayName?: string;
+}
 
 export interface VisitorGpsLocation {
   lat: number;
@@ -18,8 +26,21 @@ export interface VisitorGpsLocation {
   region?: string;
   country?: string;
   displayName?: string;
+  /** أسماء المكان حسب لغة الواجهة — حتى لا تظهر عجمان بالعربية في تقرير EN/DE */
+  labels?: Partial<Record<LangKey, VisitorPlaceParts>>;
+  accuracy?: number;
   consent: true;
   at: number;
+}
+
+function hasArabicScript(s: string): boolean {
+  return /[\u0600-\u06FF]/.test(s);
+}
+
+function nominatimLang(lang: LangKey): string {
+  if (lang === 'de') return 'de,en';
+  if (lang === 'ar') return 'ar,en';
+  return 'en';
 }
 
 export interface SeasonWeatherInput {
@@ -44,11 +65,29 @@ export function clearStoredVisitorLocation() {
   try { localStorage.removeItem(LOC_KEY); } catch { /* */ }
 }
 
-async function reverseGeocode(lat: number, lon: number): Promise<Partial<VisitorGpsLocation>> {
+export function getVisitorGpsDecision(): 'accepted' | 'declined' | null {
   try {
-    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=ar,en`;
+    const value = localStorage.getItem(LOC_DECISION_KEY);
+    return value === 'accepted' || value === 'declined' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveVisitorGpsDecision(value: 'accepted' | 'declined') {
+  try { localStorage.setItem(LOC_DECISION_KEY, value); } catch { /* */ }
+}
+
+export function clearVisitorGpsDecision() {
+  try { localStorage.removeItem(LOC_DECISION_KEY); } catch { /* */ }
+}
+
+async function reverseGeocode(lat: number, lon: number, lang: LangKey = 'ar'): Promise<VisitorPlaceParts> {
+  try {
+    const accept = nominatimLang(lang);
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=${encodeURIComponent(accept)}`;
     const res = await fetch(url, {
-      headers: { 'Accept-Language': 'ar,en', 'User-Agent': 'eng-alaa.com/1.0' },
+      headers: { 'Accept-Language': accept, 'User-Agent': 'eng-alaa.com/1.0' },
     });
     if (!res.ok) return {};
     const j = await res.json() as {
@@ -68,23 +107,83 @@ async function reverseGeocode(lat: number, lon: number): Promise<Partial<Visitor
   }
 }
 
-async function saveLocation(lat: number, lon: number): Promise<VisitorGpsLocation> {
-  const geo = await reverseGeocode(lat, lon);
+function persistLocation(loc: VisitorGpsLocation): void {
+  try { localStorage.setItem(LOC_KEY, JSON.stringify(loc)); } catch { /* */ }
+}
+
+/** يجلب اسم المنطقة بلغة الواجهة إن لم يكن محفوظاً (للمواقع القديمة المخزّنة بالعربية فقط) */
+export async function ensureLocationInLang(
+  loc: VisitorGpsLocation,
+  lang: LangKey,
+): Promise<VisitorGpsLocation> {
+  const existing = loc.labels?.[lang];
+  if (existing?.city || existing?.region || existing?.country) return loc;
+
+  if (lang === 'ar' && (loc.city || loc.region || loc.country)) {
+    const next: VisitorGpsLocation = {
+      ...loc,
+      labels: {
+        ...loc.labels,
+        ar: {
+          city: loc.city,
+          region: loc.region,
+          country: loc.country,
+          displayName: loc.displayName,
+        },
+      },
+    };
+    persistLocation(next);
+    return next;
+  }
+
+  const geo = await reverseGeocode(loc.lat, loc.lon, lang);
+  if (!geo.city && !geo.region && !geo.country) return loc;
+
+  const next: VisitorGpsLocation = {
+    ...loc,
+    labels: {
+      ...loc.labels,
+      [lang]: geo,
+    },
+  };
+  if (lang === 'ar') {
+    next.city = geo.city || loc.city;
+    next.region = geo.region || loc.region;
+    next.country = geo.country || loc.country;
+    next.displayName = geo.displayName || loc.displayName;
+  }
+  persistLocation(next);
+  return next;
+}
+
+async function saveLocation(lat: number, lon: number, accuracy?: number): Promise<VisitorGpsLocation> {
+  const [ar, en, de] = await Promise.all([
+    reverseGeocode(lat, lon, 'ar'),
+    reverseGeocode(lat, lon, 'en'),
+    reverseGeocode(lat, lon, 'de'),
+  ]);
   const loc: VisitorGpsLocation = {
     lat,
     lon,
-    city: geo.city,
-    region: geo.region,
-    country: geo.country,
-    displayName: geo.displayName,
+    city: ar.city || en.city,
+    region: ar.region || en.region,
+    country: ar.country || en.country,
+    displayName: ar.displayName || en.displayName,
+    labels: { ar, en, de },
+    accuracy,
     consent: true,
     at: Date.now(),
   };
-  try { localStorage.setItem(LOC_KEY, JSON.stringify(loc)); } catch { /* */ }
+  persistLocation(loc);
+  saveVisitorGpsDecision('accepted');
   trackAnalytics('heartbeat', {
     path: 'gps_location',
-    label: geo.displayName || `${lat},${lon}`,
-    meta: { gps: true, lat, lon, city: geo.city, region: geo.region, country: geo.country },
+    label: loc.displayName || `${lat},${lon}`,
+    meta: {
+      gps: true, lat, lon,
+      city: loc.city, region: loc.region, country: loc.country,
+      ...(accuracy != null && Number.isFinite(accuracy) ? { accuracy } : {}),
+    },
   });
   return loc;
 }
@@ -117,7 +216,7 @@ export function requestVisitorLocation(): Promise<VisitorGpsLocation> {
       settled = true;
       if (watchId != null) navigator.geolocation.clearWatch(watchId);
       try {
-        resolve(await saveLocation(pos.coords.latitude, pos.coords.longitude));
+        resolve(await saveLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy));
       } catch (e) {
         reject(e);
       }
@@ -293,8 +392,20 @@ export function seasonGuideText(
     + '• Some plants may be legally restricted — check local regulations.';
 }
 
-export function locationLabel(loc: VisitorGpsLocation, _lang: LangKey): string {
-  const parts = [loc.city, loc.region, loc.country].filter(Boolean);
+export function locationLabel(loc: VisitorGpsLocation, lang: LangKey): string {
+  const L = loc.labels?.[lang];
+  let parts = [L?.city, L?.region, L?.country].filter(Boolean) as string[];
+
+  if (!parts.length && lang === 'ar') {
+    parts = [loc.city, loc.region, loc.country].filter(Boolean) as string[];
+  }
+
+  /* لا نعرض أسماء عربية داخل تقرير/واجهة إنجليزي أو ألماني */
+  if (!parts.length && lang !== 'ar') {
+    const raw = [loc.city, loc.region, loc.country].filter(Boolean) as string[];
+    if (raw.length && !raw.some(hasArabicScript)) parts = raw;
+  }
+
   if (parts.length) return parts.join(' · ');
   return `${loc.lat.toFixed(4)}°, ${loc.lon.toFixed(4)}°`;
 }

@@ -1,16 +1,43 @@
 node_modules/
 dist/
+dist_hostinger.tar.gz
 hostinger_upload/
 .cache/
+.local/
+.env
 .env.local
 .env.*.local
 
-# ⚠ لا ترفع هذا الملف على GitHub — يحتوي على بيانات قاعدة البيانات السرية
+# SFTP credentials (copy from sftp.json.example)
+.vscode/sftp.json
+.vscode/
+
+# مفاتيح رفع محلية
+.deploy-keys/
+
+# ⚠ لا ترفع ملفات الإعداد السرية على GitHub
+hostinger_deploy/config.php
 hostinger_deploy/api/config.php
+public_html/config.php
 public_html/api/config.php
 api/config.php
+config.php
+
+# تقارير العملاء المرفوعة وملفات مؤقتة
+public/reports/*.pdf
+hostinger_deploy/reports/*.pdf
+uploads/
+*.log
+
+# ملفات CNC/تصميم محلية ليست من الموقع
+.orn_parts/
+cnc_exports/
+exports/
+Furniture_Leg.*
+louis_xv_cabriole_leg_PREVIEW.png
+alaa16 Cursor
 
 # ملفات النظام
 .DS_Store
 Thumbs.db
-*.log
+.idea/

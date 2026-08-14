@@ -2,7 +2,7 @@ import type { ML } from './appData';
 
 export function getAiProxyUrl(): string {
   return (import.meta.env.VITE_AI_PROXY_URL as string | undefined)
-    || (import.meta.env.DEV ? '/ai_proxy.php' : './ai_proxy.php');
+    || '/ai_proxy.php';
 }
 
 export async function callAiJson<T>(prompt: string): Promise<T> {

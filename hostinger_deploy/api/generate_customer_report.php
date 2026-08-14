@@ -220,7 +220,42 @@ function nl2br_he(string $s): string {
     return implode('<br/>', $parts);
 }
 function pml(array $ml, string $lang): string {
-    return $ml[$lang] ?? $ml['ar'] ?? $ml['en'] ?? '';
+    return trim((string)($ml[$lang] ?? $ml['ar'] ?? $ml['en'] ?? ''));
+}
+/** لغة واحدة فقط — بدون رجوع للعربية عند EN/DE */
+function pmlLang($ml, string $lang): string {
+    if (is_string($ml)) {
+        return $lang === 'ar' ? trim($ml) : '';
+    }
+    if (!is_array($ml)) return '';
+    if ($lang === 'ar') {
+        return trim((string)($ml['ar'] ?? $ml['en'] ?? $ml['de'] ?? ''));
+    }
+    return trim((string)($ml[$lang] ?? ''));
+}
+function asML($val): array {
+    if (is_array($val) && (isset($val['ar']) || isset($val['en']) || isset($val['de']))) {
+        return [
+            'ar' => trim((string)($val['ar'] ?? '')),
+            'en' => trim((string)($val['en'] ?? '')),
+            'de' => trim((string)($val['de'] ?? '')),
+        ];
+    }
+    if (is_string($val) && $val !== '') {
+        /* نص قديم «عربي / English» */
+        $parts = preg_split('/\s*\/\s*/u', $val);
+        if (is_array($parts) && count($parts) >= 2
+            && preg_match('/[\x{0600}-\x{06FF}]/u', $parts[0])
+            && !preg_match('/[\x{0600}-\x{06FF}]/u', $parts[1])) {
+            return [
+                'ar' => trim($parts[0]),
+                'en' => trim($parts[1]),
+                'de' => trim($parts[2] ?? $parts[1]),
+            ];
+        }
+        return ['ar' => $val, 'en' => '', 'de' => ''];
+    }
+    return ['ar' => '', 'en' => '', 'de' => ''];
 }
 function withCur(string $num, string $currency): string {
     return $currency ? "$num $currency" : $num;
@@ -228,17 +263,17 @@ function withCur(string $num, string $currency): string {
 
 /* ── Extract data ── */
 $rType        = $report['reportType'] ?? 'soil';
-$custName     = $report['customerName']     ?? '';
+$custName     = pmlLang(asML($report['customerName'] ?? ''), $lang);
 $custPhone    = $report['customerPhone']    ?? '';
-$custLocation = $report['customerLocation'] ?? '';
+$custLocation = pmlLang(asML($report['customerLocation'] ?? ''), $lang);
 $attDate      = $report['attendanceDate']   ?? '';
 $exDate       = $report['examDate']         ?? '';
 $images       = array_filter($report['images'] ?? []);
-$plantName    = pml($report['plantName']    ?? [], $lang);
-$descTxt      = pml($report['description'] ?? [], $lang);
-$finalTxt     = pml($report['finalReport'] ?? [], $lang);
+$plantName    = pmlLang(asML($report['plantName'] ?? []), $lang);
+$descTxt      = pmlLang(asML($report['description'] ?? []), $lang);
+$finalTxt     = pmlLang(asML($report['finalReport'] ?? []), $lang);
 $rows         = array_values(array_filter($report['soilRows'] ?? [], function($r) use ($lang) {
-    return pml($r['test'] ?? [], $lang) || pml($r['actual'] ?? [], $lang) || pml($r['ideal'] ?? [], $lang);
+    return pmlLang(asML($r['test'] ?? []), $lang) || pmlLang(asML($r['actual'] ?? []), $lang) || pmlLang(asML($r['ideal'] ?? []), $lang);
 }));
 
 $theme        = ($tpl['themeColor'] ?? '#2a7a2a') ?: '#2a7a2a';
@@ -446,9 +481,9 @@ $colPct  = $cnt <= 3 ? floor(100 / $cnt) : 24;
   <tbody>
 <?php foreach ($rows as $i => $row): ?>
     <tr style="background:<?= $i % 2 ? '#fff' : '#f6faf6' ?>;">
-      <td style="padding:5pt 8pt;border-bottom:1pt solid #e8f0e8;font-weight:700;color:#1d3a1d;"><?= he(pml($row['test']   ?? [], $lang)) ?></td>
-      <td style="padding:5pt 8pt;border-bottom:1pt solid #e8f0e8;"><?= he(pml($row['actual'] ?? [], $lang)) ?></td>
-      <td style="padding:5pt 8pt;border-bottom:1pt solid #e8f0e8;color:<?= $theme ?>;font-weight:600;"><?= he(pml($row['ideal']  ?? [], $lang)) ?></td>
+      <td style="padding:5pt 8pt;border-bottom:1pt solid #e8f0e8;font-weight:700;color:#1d3a1d;"><?= he(pmlLang(asML($row['test']   ?? []), $lang)) ?></td>
+      <td style="padding:5pt 8pt;border-bottom:1pt solid #e8f0e8;"><?= he(pmlLang(asML($row['actual'] ?? []), $lang)) ?></td>
+      <td style="padding:5pt 8pt;border-bottom:1pt solid #e8f0e8;color:<?= $theme ?>;font-weight:600;"><?= he(pmlLang(asML($row['ideal']  ?? []), $lang)) ?></td>
     </tr>
 <?php endforeach; ?>
   </tbody>

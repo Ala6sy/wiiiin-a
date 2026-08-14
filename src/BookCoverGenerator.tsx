@@ -76,7 +76,7 @@ function resolveForCanvas(url: string): string {
     const thumbUrl = id
       ? `https://drive.google.com/thumbnail?id=${id}&sz=w800`
       : url;
-    return `./api/img-proxy.php?url=${encodeURIComponent(thumbUrl)}`;
+    return `/api/img-proxy.php?url=${encodeURIComponent(thumbUrl)}`;
   }
   return url;
 }

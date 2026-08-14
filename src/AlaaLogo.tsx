@@ -2,13 +2,16 @@ export function AlaaLogo({
   color = '#003366',
   size = 40,
   style,
+  className,
 }: {
   color?: string;
   size?: number;
   style?: React.CSSProperties;
+  className?: string;
 }) {
   return (
     <svg
+      className={className}
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 693.9 704.5"
       width={size}

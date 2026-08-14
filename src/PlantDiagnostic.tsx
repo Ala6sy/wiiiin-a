@@ -2,14 +2,21 @@ import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { AppData, ML, ml, pickML, LangKey } from './appData';
 import { AlaaLogo } from './AlaaLogo';
-import { captureReportSnapshot, snapshotDataUrlToPdfBlob, waitForImages } from './plantReportPdfExport';
+import { captureReportSnapshot, snapshotDataUrlToPdfBlob, waitForImages, rasterizeReportImagesForCapture } from './plantReportPdfExport';
+import { resolveImageSrc } from './mediaUrl';
 
 /* ── Localized labels ─────────────────────────────────── */
 const LBL = {
   reportTitle: ml('تقرير التشخيص الزراعي', 'Agricultural Diagnostic Report', 'Agrardiagnosebericht'),
   uploadTitle: ml('ارفع صور النبات (ورقة، ساق، جذور، صورة مجهرية)', 'Upload plant images (leaf, stem, roots, microscopic)', 'Pflanzenbilder hochladen (Blatt, Stängel, Wurzeln, Mikroskop)'),
   addImg: ml('رفع صورة', 'Add image', 'Bild'),
-  diagnoseBtn: ml('تشخيص فوري بالذكاء الاصطناعي', 'Instant AI Diagnosis', 'Sofortige KI-Diagnose'),
+  sourceTitle: ml('اختر مصدر الصورة', 'Choose image source', 'Bildquelle wählen'),
+  sourceCamera: ml('تصوير مباشر بالكاميرا', 'Take a photo', 'Foto aufnehmen'),
+  sourceCameraHint: ml('افتح كاميرا الجوال وصوّر النبات', 'Open the camera and photograph the plant', 'Kamera öffnen und Pflanze fotografieren'),
+  sourceGallery: ml('اختيار من الاستديو', 'Choose from gallery', 'Aus der Galerie wählen'),
+  sourceGalleryHint: ml('اختر صورة أو أكثر من معرض الصور', 'Pick one or more saved images', 'Ein oder mehrere gespeicherte Bilder wählen'),
+  cancel: ml('إلغاء', 'Cancel', 'Abbrechen'),
+  diagnoseBtn: ml('تشخيص فوري وتقرير pdf', 'Instant diagnosis & PDF report', 'Sofortige Diagnose & PDF-Bericht'),
   analyzing: ml('جاري التحليل...', 'Analyzing...', 'Analysiere...'),
   noImages: ml('الرجاء رفع صورة واحدة على الأقل', 'Please upload at least one image', 'Bitte mindestens ein Bild hochladen'),
   error: ml('تعذّر إجراء التشخيص. حاول مرة أخرى.', 'Diagnosis failed. Please try again.', 'Diagnose fehlgeschlagen. Bitte erneut versuchen.'),
@@ -180,6 +187,14 @@ function fileToDataUrl(file: File, max = 1100): Promise<string> {
 
 const PDF_ENDPOINT = '/generate_report.php';
 
+/** جهاز محمول بكاميرا مدمجة — يشمل iPadOS الذي يُعرّف نفسه كـ Macintosh */
+function isHandheldDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  if (/Android|iPhone|iPod|iPad|Windows Phone|Mobile|Opera Mini|IEMobile/i.test(ua)) return true;
+  return navigator.maxTouchPoints > 1 && /Macintosh/i.test(ua);
+}
+
 /** Offscreen 794px render for export — avoids preview scale-transform artifacts */
 async function captureReportElementForPdf(
   target: LangKey,
@@ -196,6 +211,7 @@ async function captureReportElementForPdf(
     throw new Error('تعذّر تحضير التقرير للتصدير');
   }
   await waitForImages(el);
+  await rasterizeReportImagesForCapture(el);
   return el;
 }
 
@@ -228,6 +244,8 @@ export function PlantDiagnostic({ data, lang }: { data: AppData; lang: LangKey }
   const [results, setResults] = useState<Partial<Record<LangKey, DiagResult>>>({});
   const [exportBusy, setExportBusy] = useState<LangKey | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const [sourceOpen, setSourceOpen] = useState(false);
   const previewWrapRef    = useRef<HTMLDivElement>(null);
   const previewContentRef = useRef<HTMLDivElement>(null);
   const pdfCaptureHostRef = useRef<HTMLDivElement>(null);
@@ -293,6 +311,18 @@ export function PlantDiagnostic({ data, lang }: { data: AppData; lang: LangKey }
   }, [current]);
 
   /* ── images ── */
+  /* الهواتف: نعرض خيار الكاميرا/الاستديو لأن Chrome على أندرويد يفتح الاستديو فقط مع multiple */
+  function openImagePicker() {
+    if (isHandheldDevice()) setSourceOpen(true);
+    else fileRef.current?.click();
+  }
+
+  function pickFromSource(source: 'camera' | 'gallery') {
+    setSourceOpen(false);
+    const input = source === 'camera' ? cameraRef.current : fileRef.current;
+    window.setTimeout(() => input?.click(), 60);
+  }
+
   async function addFiles(files: FileList | null) {
     if (!files) return;
     const slots = 6 - images.length;
@@ -363,11 +393,9 @@ Rules:
 - diseases can be []
 - When a disease is detected, pesticides AND pesticideDosage are mandatory with specific numbers (ml/L, %, g/L, treatments count)`;
 
-    /* dev: /ai_proxy.php → Vite proxy → Hostinger (see vite.config.ts)
-       prod: ./ai_proxy.php on same server
-       override: VITE_AI_PROXY_URL in .env.local */
+    /* دائماً من جذر الموقع — المسارات النسبية تتكسر على /agri/diag وغيرها */
     const proxyUrl = (import.meta.env.VITE_AI_PROXY_URL as string | undefined)
-      || (import.meta.env.DEV ? '/ai_proxy.php' : './ai_proxy.php');
+      || '/ai_proxy.php';
 
     const proxyBody = JSON.stringify({
       prompt,
@@ -399,7 +427,8 @@ Rules:
     }
 
     if (!res.ok || !json.ok) {
-      throw new Error(json?.error || `خطأ في الاتصال بالخادم (HTTP ${res.status})`);
+      const detail = (json?.error || '').trim();
+      throw new Error(detail || `خطأ في الاتصال بالخادم (HTTP ${res.status})`);
     }
 
     return normalizeNutrientsInResult(json.result as DiagResult);
@@ -566,14 +595,39 @@ Rules:
             </div>
           ))}
           {images.length < 6 && (
-            <button onClick={() => fileRef.current?.click()} disabled={exporting} style={{ ...addImgBtn, borderColor: 'var(--navy)', color: 'var(--navy)', opacity: exporting ? 0.5 : 1 }}>
+            <button onClick={openImagePicker} disabled={exporting} style={{ ...addImgBtn, borderColor: 'var(--navy)', color: 'var(--navy)', opacity: exporting ? 0.5 : 1 }}>
               <i className="fa-solid fa-plus" style={{ fontSize: 22, marginBottom: 4 }} />
               {L(LBL.addImg)}
             </button>
           )}
           <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
             onChange={e => { addFiles(e.target.files); e.target.value = ''; }} />
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+            onChange={e => { addFiles(e.target.files); e.target.value = ''; }} />
         </div>
+        {sourceOpen && (
+          <div style={sourceOverlay} onClick={() => setSourceOpen(false)}>
+            <div style={{ ...sourceSheet, direction: isRtl ? 'rtl' : 'ltr' }} onClick={e => e.stopPropagation()}>
+              <div style={sourceHandle} />
+              <div style={sourceTitleStyle}>{L(LBL.sourceTitle)}</div>
+              <button type="button" style={sourceBtn} onClick={() => pickFromSource('camera')}>
+                <span style={sourceIcon}><i className="fa-solid fa-camera" /></span>
+                <span>
+                  <b style={sourceBtnTitle}>{L(LBL.sourceCamera)}</b>
+                  <small style={sourceBtnHint}>{L(LBL.sourceCameraHint)}</small>
+                </span>
+              </button>
+              <button type="button" style={sourceBtn} onClick={() => pickFromSource('gallery')}>
+                <span style={sourceIcon}><i className="fa-solid fa-images" /></span>
+                <span>
+                  <b style={sourceBtnTitle}>{L(LBL.sourceGallery)}</b>
+                  <small style={sourceBtnHint}>{L(LBL.sourceGalleryHint)}</small>
+                </span>
+              </button>
+              <button type="button" style={sourceCancelBtn} onClick={() => setSourceOpen(false)}>{L(LBL.cancel)}</button>
+            </div>
+          </div>
+        )}
         <button onClick={diagnose} disabled={loading || exporting} style={{ ...primeBtn, background: 'var(--navy)', opacity: loading || exporting ? 0.7 : 1 }}>
           {loading
             ? <><i className="fa-solid fa-spinner fa-spin" /> {L(LBL.analyzing)}</>
@@ -787,11 +841,11 @@ function PlantReportDoc({ data, lang, result, images, innerRef }: {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
           {tpl.headerLogo
-            ? <img src={tpl.headerLogo} alt="logo" style={{ height: 58, objectFit: 'contain' }} />
-            : st?.logoType === 'svg_alaa' || (!st?.logoType && !st?.logoImg)
-              ? <AlaaLogo color={engNameColor} size={58} />
+            ? <img className="plant-report-header-logo" src={resolveImageSrc(tpl.headerLogo)} alt="logo" style={{ height: 58, objectFit: 'contain' }} />
+              : st?.logoType === 'svg_alaa' || (!st?.logoType && !st?.logoImg)
+              ? <AlaaLogo className="plant-report-alaa-logo" color={engNameColor} size={58} />
               : st?.logoType === 'image' && st?.logoImg
-                ? <img src={st.logoImg} alt="logo" style={{ height: 58, objectFit: 'contain' }} />
+                ? <img className="plant-report-header-logo" src={st.logoImg} alt="logo" style={{ height: 58, objectFit: 'contain' }} />
                 : <div style={{ fontWeight: 900, color: engNameColor, fontSize: 22 }}>{pickML(st?.logoText, lang) || 'م.علاء'}</div>}
           <div>
             <div style={{ fontWeight: 800, color: engNameColor, fontSize: 14, lineHeight: 1.3 }}>
@@ -856,12 +910,12 @@ function PlantReportDoc({ data, lang, result, images, innerRef }: {
           {result.nutrients && result.nutrients.length > 0 && (
             <div className="pdf-section" style={{ marginBottom: 12, breakInside: 'avoid', pageBreakInside: 'avoid' }}>
               <div style={subTitle}><i className="fa-solid fa-flask" /> {L(LBL.nutrientsSection)}</div>
-              <table dir={isRtl ? 'rtl' : 'ltr'} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+              <table dir={isRtl ? 'rtl' : 'ltr'} className="plant-report-nutrients-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
                 <thead>
                   <tr style={{ background: theme, color: '#fff' }}>
-                    <th style={{ padding: '5px 8px', textAlign: isRtl ? 'right' : 'left' }}>{L(LBL.nutrientName)}</th>
-                    <th style={{ padding: '5px 8px', textAlign: isRtl ? 'right' : 'left' }}>{L(LBL.nutrientCat)}</th>
-                    <th style={{ padding: '5px 8px', textAlign: isRtl ? 'right' : 'left' }}>{L(LBL.nutrientRatio)}</th>
+                    <th style={{ padding: '8px 8px', textAlign: isRtl ? 'right' : 'left', verticalAlign: 'middle' }}>{L(LBL.nutrientName)}</th>
+                    <th style={{ padding: '8px 8px', textAlign: isRtl ? 'right' : 'left', verticalAlign: 'middle' }}>{L(LBL.nutrientCat)}</th>
+                    <th style={{ padding: '8px 8px', textAlign: isRtl ? 'right' : 'left', verticalAlign: 'middle' }}>{L(LBL.nutrientRatio)}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -980,13 +1034,13 @@ function PlantReportDoc({ data, lang, result, images, innerRef }: {
           <div style={{ display: 'flex', gap: 30, alignItems: 'flex-end' }}>
             <div style={{ textAlign: 'center', minWidth: 130 }}>
               {tpl.engSignature
-                ? <img src={tpl.engSignature} alt="" style={{ maxHeight: 64, maxWidth: 150, objectFit: 'contain' }} />
+                ? <img className="plant-report-signature-img" src={resolveImageSrc(tpl.engSignature)} alt="" crossOrigin="anonymous" style={{ maxHeight: 64, maxWidth: 150, objectFit: 'contain', display: 'block', margin: '0 auto' }} />
                 : <div style={{ height: 64 }} />}
               <div style={{ borderTop: '1px solid #999', marginTop: 4, paddingTop: 5, fontSize: 11, fontWeight: 700, color: '#444' }}>{L(LBL.engSignature)}</div>
             </div>
             {tpl.engStamp && (
               <div style={{ textAlign: 'center' }}>
-                <img src={tpl.engStamp} alt="" style={{ maxHeight: 84, maxWidth: 120, objectFit: 'contain' }} />
+                <img className="plant-report-stamp-img" src={resolveImageSrc(tpl.engStamp)} alt="" crossOrigin="anonymous" style={{ maxHeight: 84, maxWidth: 120, objectFit: 'contain', display: 'block', margin: '0 auto' }} />
               </div>
             )}
           </div>
@@ -1038,6 +1092,15 @@ const panel: React.CSSProperties = { background: 'var(--glass)', border: '1px so
 const primeBtn: React.CSSProperties = { color: '#fff', border: 'none', borderRadius: 10, padding: '11px 22px', fontWeight: 800, fontSize: 14, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8, fontFamily: 'inherit', width: '100%', justifyContent: 'center' };
 const langBtn: React.CSSProperties = { color: '#fff', border: 'none', borderRadius: 9, padding: '8px 14px', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: 'inherit' };
 const addImgBtn: React.CSSProperties = { width: 92, height: 92, borderRadius: 10, border: '2px dashed', background: 'var(--navy-light)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontFamily: 'inherit', fontWeight: 600 };
+const sourceOverlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 4000, background: 'rgba(3, 12, 24, .62)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 14 };
+const sourceSheet: React.CSSProperties = { width: '100%', maxWidth: 430, background: '#fff', borderRadius: 20, padding: '12px 16px 18px', boxShadow: '0 18px 46px rgba(0,0,0,.34)', display: 'flex', flexDirection: 'column', gap: 10 };
+const sourceHandle: React.CSSProperties = { width: 44, height: 4, borderRadius: 4, background: '#d3dbe4', margin: '0 auto 6px' };
+const sourceTitleStyle: React.CSSProperties = { fontWeight: 800, fontSize: 15, color: '#00335f', textAlign: 'center', marginBottom: 4 };
+const sourceBtn: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 12, width: '100%', border: '1px solid #d8e3ee', borderRadius: 14, background: '#f7fafd', padding: '13px 14px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'start' };
+const sourceIcon: React.CSSProperties = { width: 42, height: 42, minWidth: 42, borderRadius: 12, background: '#00335f', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 17 };
+const sourceBtnTitle: React.CSSProperties = { display: 'block', fontSize: 14, fontWeight: 800, color: '#123253' };
+const sourceBtnHint: React.CSSProperties = { display: 'block', fontSize: 11.5, color: '#6b7c8f', marginTop: 2, lineHeight: 1.5 };
+const sourceCancelBtn: React.CSSProperties = { border: 'none', background: 'transparent', color: '#6b7c8f', fontWeight: 700, fontSize: 13.5, padding: '8px 0 2px', cursor: 'pointer', fontFamily: 'inherit' };
 const delBtn: React.CSSProperties = { position: 'absolute', top: -7, insetInlineEnd: -7, background: '#c0392b', color: '#fff', border: 'none', borderRadius: '50%', width: 22, height: 22, cursor: 'pointer', fontSize: 11 };
 const a4Base: React.CSSProperties = { width: 794, background: '#fff', padding: 36, boxSizing: 'border-box', fontFamily: 'Tajawal, sans-serif', color: '#222' };
-const td: React.CSSProperties = { padding: '6px 8px', borderBottom: '1px solid #e8f0e8', textAlign: 'start' };
+const td: React.CSSProperties = { padding: '8px 8px', borderBottom: '1px solid #e8f0e8', textAlign: 'start', verticalAlign: 'middle', lineHeight: 1.45 };

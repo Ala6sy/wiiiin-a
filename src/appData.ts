@@ -1,4 +1,9 @@
 import { resolveArticleCategories, resolveGfxCategories } from './defaultCatalog';
+import type { GfxModel3dSettings } from './gfxModel3d';
+import type { GfxDownloadLink } from './gfxDownloadLinks';
+import { normGfxModel3dSettings } from './gfxModel3d';
+import { normGfxDownloadLinks } from './gfxDownloadLinks';
+import { mergeSoilReportSamples } from './soilReportSamples';
 
 export interface ML { ar: string; en: string; de: string }
 export type LangKey = 'ar' | 'en' | 'de';
@@ -41,6 +46,8 @@ export interface Skill {
   percent: number;
   icon: string;
   size?: number;
+  /** عرض المهارة في صفحة السيرة — الافتراضي true */
+  showOnAbout?: boolean;
 }
 
 /* ── Site Settings ─────────────────────────────────────── */
@@ -57,8 +64,58 @@ export interface SiteSettings {
   navItems: NavItem[];
   themeMode: 'dark' | 'light';
   accentColor: string;
+  /** لون خط القوائم والأزرار (pill) — إن فُرغ يتبع accent تلقائياً */
+  menuTextColor?: string;
+  /** لون خلفية الأزرار (العودة، التالي، حفظ…) — فارغ = يتبع اللون الأساسي */
+  buttonBgColor?: string;
+  /** لون خط الأزرار — فارغ = أبيض */
+  buttonTextColor?: string;
+  /** لون زر «تنزيل مجاني» في صفحة مشروع التصميم — فارغ = كحلي #003366 */
+  gfxFreeDownloadBtnColor?: string;
+  /** نوع الخط للموقع بالكامل */
+  siteFontFamily?: string;
+  /** حجم الخط الأساسي بالبكسل (12–24) */
+  baseFontSize?: number;
+  /** لون النص العام — فارغ = تلقائي حسب الثيم */
+  bodyTextColor?: string;
+  /** لون العناوين — فارغ = يتبع اللون الأساسي */
+  headingTextColor?: string;
+  /** لون النص الثانوي/الوصف — فارغ = تلقائي */
+  mutedTextColor?: string;
   glassOpacity: number;
   threeScriptUrl?: string;
+  /** إظهار طلب موافقة GPS الدقيق للزائر عند دخوله الموقع */
+  visitorGpsPromptEnabled?: boolean;
+  /**
+   * وسائط صورة السيرة (يمين الصفحة): صورة أو فيديو/WebM.
+   * فارغ = الافتراضي /alaa-photo.jpg
+   * رفع مباشر (data:) أو رابط Google Drive / مباشر
+   */
+  aboutHeroMedia?: string;
+  /** نوع الوسائط — auto يكتشف من الامتداد؛ video يفرض تشغيل فيديو (مفيد لروابط Drive) */
+  aboutHeroKind?: 'auto' | 'image' | 'video';
+  /** إظهار البطاقة الزجاجية (الاسم) فوق صورة/فيديو السيرة */
+  aboutNameBadgeVisible?: boolean;
+  /** بعد البطاقة عن أسفل الفيديو — ويب (px) */
+  aboutNameBadgeBottomDesktop?: number;
+  /** بعد البطاقة عن أسفل الفيديو — جوال (px) */
+  aboutNameBadgeBottomMobile?: number;
+  /** الحشو العمودي للبطاقة فقط (لا يصغّر المخطوطة) */
+  aboutNameBadgePadY?: number;
+  /**
+   * فيديو تعريفي للصفحة الرئيسية (اختياري).
+   * فارغ = لا يُعرض شيء. رابط Drive / مباشر / YouTube.
+   */
+  homeIntroVideo?: string;
+  /**
+   * معرض تقارير العملاء: إظهار اسم العميل بسطر ناعم تحت العنوان.
+   * الافتراضي: ظاهر.
+   */
+  reportGalleryShowCustomerName?: boolean;
+  /** عدد بطاقات التقارير في صف واحد — جوال */
+  reportGalleryColsMobile?: number;
+  /** عدد بطاقات التقارير في صف واحد — ويب */
+  reportGalleryColsDesktop?: number;
 }
 
 /* ── Agri content ───────────────────────────────────────── */
@@ -231,9 +288,9 @@ export type ReportType = 'soil' | 'disease' | 'insect';
 export interface CustomerReport {
   id: string;
   reportType: ReportType;
-  customerName: string;
+  customerName: ML;
   customerPhone: string;
-  customerLocation: string;
+  customerLocation: ML;
   attendanceDate: string;
   examDate: string;
   images: string[];
@@ -244,8 +301,58 @@ export interface CustomerReport {
   createdAt: string;
 }
 
+/** نص تقرير حسب اللغة — بدون رجوع للعربية عند EN/DE */
+export function pickReportML(m: ML | string | undefined, lang: LangKey): string {
+  if (lang === 'ar') return pickML(m, 'ar');
+  return pickMLStrict(m, lang);
+}
+
+/**
+ * تطبيع حقل عميل/موقع قديم:
+ * - JSON ML
+ * - أو نص «عربي / English»
+ */
+export function normPersonML(v: unknown): ML {
+  const m = normML(v);
+  const trySplit = (s: string): ML | null => {
+    const parts = s.split(/\s*\/\s*/).map(p => p.trim()).filter(Boolean);
+    if (parts.length < 2) return null;
+    const hasAr = /[\u0600-\u06FF]/.test(parts[0]);
+    const secondIsLatin = !/[\u0600-\u06FF]/.test(parts[1]);
+    if (hasAr && secondIsLatin) {
+      return ml(parts[0], parts[1], parts[2] || parts[1]);
+    }
+    return null;
+  };
+  if (m.ar && !m.en && !m.de) {
+    const split = trySplit(m.ar);
+    if (split) return split;
+  }
+  /* نفس النص المزدوج في ar/en/de (من عينات قديمة) */
+  if (m.ar && m.en === m.ar && m.de === m.ar) {
+    const split = trySplit(m.ar);
+    if (split) return split;
+  }
+  return m;
+}
+
 /* ── Agri portal: instructional videos & public client reports ── */
-export interface AgriVideo { id: string; title: ML; url: string; visible: boolean }
+export interface AgriVideo {
+  id: string;
+  title: ML;
+  url: string;
+  visible: boolean;
+  /** صورة مصغّرة — رابط Drive أو data:image */
+  poster?: string;
+  /** موضع الإطار الملتقط من الفيديو (ثوانٍ) */
+  posterTimeSec?: number;
+  /** تشغيل تلقائي عند فتح الصفحة (وإلا بالضغط) */
+  autoplay?: boolean;
+  /** تكرار مستمر (WebM / صورة متحركة) — افتراضي true */
+  loop?: boolean;
+  /** كتم الصوت (مطلوب غالباً للتكرار التلقائي) */
+  muted?: boolean;
+}
 export interface PublicReport { id: string; title: ML; thumbnail: string; url: string; visible: boolean }
 
 /* ── Graphics ───────────────────────────────────────────── */
@@ -255,8 +362,10 @@ export interface GfxProjectItem {
   desc: ML;
   mainImg: string;
   mainImgNoWm?: boolean;
+  mainImgIsVideo?: boolean;
   images: string[];
   imagesNoWm?: boolean[];
+  imagesIsVideo?: boolean[];
   videoUrl: string;
   usedSkillsIds: string[];
   cvSettings: { isFeatured: boolean; imgSize: number; showDesc: boolean; showTools: boolean };
@@ -265,6 +374,9 @@ export interface GfxProjectItem {
   glbPrice?: string;
   glbCurrency?: string;
   glbFreeUrl?: string;
+  glbViewSettings?: GfxModel3dSettings;
+  /** روابط تحميل متعددة (مجانية / مدفوعة) */
+  downloadLinks?: GfxDownloadLink[];
   /** ملف التصميم الأصلي (PSD / DWG / C4D …) على Google Drive */
   sourceFileUrl?: string;
   sourceFileVisible?: boolean;
@@ -298,8 +410,9 @@ export interface AiVaultItem {
 
 /* ── Software Lab ────────────────────────────────────────── */
 export interface SoftwareSnippet {
-  title: string;
-  desc: string;
+  id?: string;
+  title: ML;
+  desc: ML;
   codeHtml: string;
   codeCss: string;
   codeJs?: string;
@@ -316,11 +429,14 @@ export interface WebProject {
   liveUrl: string;
   googlePlayUrl?: string;
   appleStoreUrl?: string;
+  googlePlayVisible?: boolean;
+  appleStoreVisible?: boolean;
   githubUrl?: string;
   githubVisible?: boolean;
   tags: string[];
   thumbSize?: number;
   textColor?: string;
+  imgBgColor?: string;
 }
 
 export interface WebGridSettings {
@@ -359,6 +475,8 @@ export interface GfxGridSettings {
   descFontSize?: number;
   tagFontSize?: number;
   autoScaleFont?: boolean;
+  /** الوضع الافتراضي عند فتح مركز التصاميم — يمكن للزائر التبديل من الصفحة */
+  galleryBrowseMode?: 'all' | 'byCategory';
 }
 export const DEFAULT_GFX_GRID: GfxGridSettings = {
   colsMobile: 1,
@@ -371,6 +489,7 @@ export const DEFAULT_GFX_GRID: GfxGridSettings = {
   descFontSize: 12,
   tagFontSize: 10,
   autoScaleFont: true,
+  galleryBrowseMode: 'all',
 };
 export interface InjectedPage { title: string; html: string; css: string }
 
@@ -785,6 +904,24 @@ export interface CustomCv { id: string; name: string; template: 'agri' | 'dev'; 
 /** طريقة عرض الاسم في الواجهة الرئيسية */
 export type NameDisplayMode = 'text' | 'handwriting' | 'logo';
 
+/** تخصيص الجولة التفاعلية في /p — النص والصوت لكل لغة */
+export interface WalkthroughStepSettings {
+  id: string;
+  enabled?: boolean;
+  title?: ML;
+  body?: ML;
+  durationMs?: number;
+  audio?: Partial<Record<LangKey, string>>;
+}
+
+export interface AgriWalkthroughSettings {
+  enabled?: boolean;
+  autoplay?: boolean;
+  defaultSpeed?: number;
+  plantImages?: string[];
+  steps?: WalkthroughStepSettings[];
+}
+
 /* ── App-wide ────────────────────────────────────────────── */
 export interface AppData {
   name: ML;
@@ -846,6 +983,7 @@ export interface AppData {
   watermarkImg: string;
   watermarkOpacity: number;
   fileNodes: FileNode[];
+  agriWalkthrough?: AgriWalkthroughSettings;
 }
 
 /** أماكن ظهور أزرار السيرة الذاتية */
@@ -1131,8 +1269,28 @@ const DEFAULT_SITE_SETTINGS: SiteSettings = {
   ],
   themeMode: 'dark',
   accentColor: '#003366',
+  menuTextColor: '',
+  buttonBgColor: '',
+  buttonTextColor: '',
+  gfxFreeDownloadBtnColor: '',
+  siteFontFamily: 'Tajawal',
+  baseFontSize: 16,
+  bodyTextColor: '',
+  headingTextColor: '',
+  mutedTextColor: '',
   glassOpacity: 0.5,
   threeScriptUrl: '',
+  visitorGpsPromptEnabled: false,
+  aboutHeroMedia: '',
+  aboutHeroKind: 'auto',
+  aboutNameBadgeVisible: true,
+  aboutNameBadgeBottomDesktop: 22,
+  aboutNameBadgeBottomMobile: 8,
+  aboutNameBadgePadY: 6,
+  homeIntroVideo: '',
+  reportGalleryShowCustomerName: true,
+  reportGalleryColsMobile: 2,
+  reportGalleryColsDesktop: 3,
 };
 
 const DEFAULT_DATA: AppData = {
@@ -1191,10 +1349,12 @@ const DEFAULT_DATA: AppData = {
     { id: 'av2', title: ml('هوية فاخرة لعلاج طبي', 'Premium Medical Identity', 'Premium-Medizinische Identität'), prompt: 'Ultra-premium pharmaceutical product packaging design, deep navy blue and gold accents, clean white surfaces, herbal botanical elements, studio product photography, 8K sharp --v 6.0', img: 'https://images.unsplash.com/photo-1626446811236-7a6f23343130?auto=format&fit=crop&w=500&q=80', categoryId: '', subCategoryId: '' },
   ],
   softwareSnippets: [
-    { title: "واجهة تطبيق 'صندوق العائلة المالي'", desc: 'محرر إدارة الميزانية وحساب الذهب والديون التفاعلي', category: 'تطبيقات مالية', codeHtml: `<div class="fin-box">\n  <h3>محاكي العائلة المالي الذكي</h3>\n  <p>معدل أسعار الذهب الحالية متصلة لايف</p>\n  <div class="fin-row">\n    <div class="fin-card">الذهب: <b>308 ر.س/غم</b></div>\n    <div class="fin-card">الرصيد: <b>+12,450 ر.س</b></div>\n  </div>\n  <button class="fin-btn" onclick="alert('تم التحديث!')">تحديث الأسعار</button>\n</div>`, codeCss: `body { font-family: Tajawal, sans-serif; direction: rtl; background: #f0f5ff; }\n.fin-box { padding: 24px; background: #003366; color: #fff; border-radius: 14px; text-align: center; max-width: 400px; margin: auto; }\n.fin-box h3 { font-size: 20px; margin-bottom: 8px; }\n.fin-box p { font-size: 14px; opacity: 0.8; margin-bottom: 16px; }\n.fin-row { display: flex; gap: 10px; justify-content: center; margin-bottom: 16px; }\n.fin-card { background: rgba(255,255,255,0.15); padding: 10px 18px; border-radius: 8px; font-size: 13px; }\n.fin-btn { background: #fff; color: #003366; border: none; padding: 10px 24px; border-radius: 20px; font-weight: 700; font-size: 13px; cursor: pointer; }` },
-    { title: 'نظام إشعارات السيارات التفاعلي Q-Murur', desc: 'نظام إرسال الرسائل الفورية وتنبيه أصحاب المركبات', category: 'أنظمة ذكية', codeHtml: `<div class="qr-box">\n  <div class="qr-icon">🚗</div>\n  <h4>نظام QR-Murur الآمن</h4>\n  <p>اضغط لمسح الباركود والتنبيه الفوري</p>\n  <button class="qr-btn" onclick="this.textContent='✓ تم الإرسال!'; this.style.background='#28a745'">مسح الرمز الآن</button>\n</div>`, codeCss: `body { font-family: Tajawal, sans-serif; direction: rtl; background: #fff; }\n.qr-box { padding: 28px; border: 2px dashed #003366; text-align: center; border-radius: 14px; background: #f0f5ff; max-width: 360px; margin: auto; }\n.qr-icon { font-size: 40px; margin-bottom: 12px; }\n.qr-box h4 { color: #003366; font-size: 18px; margin-bottom: 8px; }\n.qr-box p { font-size: 13px; color: #556; margin-bottom: 16px; }\n.qr-btn { background: #003366; color: #fff; border: none; padding: 10px 28px; border-radius: 20px; font-size: 13px; cursor: pointer; font-family: Tajawal, sans-serif; transition: background 0.3s; }` },
+    { title: ml("واجهة تطبيق 'صندوق العائلة المالي'", "Family Finance Box App UI", "Family Finance Box App UI"), desc: ml('محرر إدارة الميزانية وحساب الذهب والديون التفاعلي', 'Interactive budget, gold price and debt manager', 'Interaktiver Budget-, Goldpreis- und Schuldenmanager'), category: 'تطبيقات مالية', codeHtml: `<div class="fin-box">\n  <h3>محاكي العائلة المالي الذكي</h3>\n  <p>معدل أسعار الذهب الحالية متصلة لايف</p>\n  <div class="fin-row">\n    <div class="fin-card">الذهب: <b>308 ر.س/غم</b></div>\n    <div class="fin-card">الرصيد: <b>+12,450 ر.س</b></div>\n  </div>\n  <button class="fin-btn" onclick="alert('تم التحديث!')">تحديث الأسعار</button>\n</div>`, codeCss: `body { font-family: Tajawal, sans-serif; direction: rtl; background: #f0f5ff; }\n.fin-box { padding: 24px; background: #003366; color: #fff; border-radius: 14px; text-align: center; max-width: 400px; margin: auto; }\n.fin-box h3 { font-size: 20px; margin-bottom: 8px; }\n.fin-box p { font-size: 14px; opacity: 0.8; margin-bottom: 16px; }\n.fin-row { display: flex; gap: 10px; justify-content: center; margin-bottom: 16px; }\n.fin-card { background: rgba(255,255,255,0.15); padding: 10px 18px; border-radius: 8px; font-size: 13px; }\n.fin-btn { background: #fff; color: #003366; border: none; padding: 10px 24px; border-radius: 20px; font-weight: 700; font-size: 13px; cursor: pointer; }` },
+    { title: ml('نظام إشعارات السيارات التفاعلي Q-Murur', 'Q-Murur Interactive Vehicle Alert System', 'Q-Murur Interaktives Fahrzeug-Benachrichtigungssystem'), desc: ml('نظام إرسال الرسائل الفورية وتنبيه أصحاب المركبات', 'Instant messaging and vehicle owner alerts', 'Sofortnachrichten und Fahrzeuginhaber-Benachrichtigungen'), category: 'أنظمة ذكية', codeHtml: `<div class="qr-box">\n  <div class="qr-icon">🚗</div>\n  <h4>نظام QR-Murur الآمن</h4>\n  <p>اضغط لمسح الباركود والتنبيه الفوري</p>\n  <button class="qr-btn" onclick="this.textContent='✓ تم الإرسال!'; this.style.background='#28a745'">مسح الرمز الآن</button>\n</div>`, codeCss: `body { font-family: Tajawal, sans-serif; direction: rtl; background: #fff; }\n.qr-box { padding: 28px; border: 2px dashed #003366; text-align: center; border-radius: 14px; background: #f0f5ff; max-width: 360px; margin: auto; }\n.qr-icon { font-size: 40px; margin-bottom: 12px; }\n.qr-box h4 { color: #003366; font-size: 18px; margin-bottom: 8px; }\n.qr-box p { font-size: 13px; color: #556; margin-bottom: 16px; }\n.qr-btn { background: #003366; color: #fff; border: none; padding: 10px 28px; border-radius: 20px; font-size: 13px; cursor: pointer; font-family: Tajawal, sans-serif; transition: background 0.3s; }` },
   ],
   webProjects: [],
+  bookGridSettings: DEFAULT_BOOK_GRID,
+  articleGridSettings: DEFAULT_ARTICLE_GRID,
   webGridSettings: DEFAULT_WEB_GRID,
   gfxGridSettings: DEFAULT_GFX_GRID,
   injectedPages: [],
@@ -1215,6 +1375,16 @@ const DEFAULT_DATA: AppData = {
   watermarkImg: '',
   watermarkOpacity: 0.15,
   fileNodes: [],
+  agriWalkthrough: {
+    enabled: true,
+    autoplay: false,
+    defaultSpeed: 1,
+    plantImages: [
+      '/milk-thistle-field.jpg',
+      '/milk-thistle-leaf-field.jpg',
+    ],
+    steps: [],
+  },
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -1235,7 +1405,7 @@ function cleanMLPart(s: unknown): string {
   return ML_GARBAGE.has(t) ? '' : t;
 }
 
-function normML(v: unknown): ML {
+export function normML(v: unknown): ML {
   if (Array.isArray(v)) {
     return { ar: cleanMLPart(v[0]), en: cleanMLPart(v[1]), de: cleanMLPart(v[2]) };
   }
@@ -1494,8 +1664,46 @@ function normSiteSettings(s: unknown): SiteSettings {
     navItems: arr<NavItem>(o.navItems, DEFAULT_SITE_SETTINGS.navItems),
     themeMode: (o.themeMode === 'light' ? 'light' : 'dark'),
     accentColor: typeof o.accentColor === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(o.accentColor.trim()) ? o.accentColor.trim() : DEFAULT_SITE_SETTINGS.accentColor,
+    menuTextColor: typeof o.menuTextColor === 'string' && (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(o.menuTextColor.trim()) || o.menuTextColor.trim() === '')
+      ? o.menuTextColor.trim()
+      : '',
+    buttonBgColor: typeof o.buttonBgColor === 'string' ? o.buttonBgColor.trim() : '',
+    buttonTextColor: typeof o.buttonTextColor === 'string' ? o.buttonTextColor.trim() : '',
+    gfxFreeDownloadBtnColor: typeof o.gfxFreeDownloadBtnColor === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(o.gfxFreeDownloadBtnColor.trim())
+      ? o.gfxFreeDownloadBtnColor.trim()
+      : (typeof o.gfxFreeDownloadBtnColor === 'string' && o.gfxFreeDownloadBtnColor.trim() === '' ? '' : ''),
+    siteFontFamily: typeof o.siteFontFamily === 'string' && o.siteFontFamily.trim()
+      ? o.siteFontFamily.trim()
+      : DEFAULT_SITE_SETTINGS.siteFontFamily,
+    baseFontSize: typeof o.baseFontSize === 'number' && isFinite(o.baseFontSize)
+      ? Math.min(24, Math.max(12, Math.round(o.baseFontSize)))
+      : DEFAULT_SITE_SETTINGS.baseFontSize,
+    bodyTextColor: typeof o.bodyTextColor === 'string' ? o.bodyTextColor.trim() : '',
+    headingTextColor: typeof o.headingTextColor === 'string' ? o.headingTextColor.trim() : '',
+    mutedTextColor: typeof o.mutedTextColor === 'string' ? o.mutedTextColor.trim() : '',
     glassOpacity: typeof o.glassOpacity === 'number' && isFinite(o.glassOpacity) ? Math.min(0.95, Math.max(0.05, o.glassOpacity)) : DEFAULT_SITE_SETTINGS.glassOpacity,
     threeScriptUrl: typeof o.threeScriptUrl === 'string' ? o.threeScriptUrl : '',
+    visitorGpsPromptEnabled: o.visitorGpsPromptEnabled === true,
+    aboutHeroMedia: typeof o.aboutHeroMedia === 'string' ? o.aboutHeroMedia.trim() : '',
+    aboutHeroKind: o.aboutHeroKind === 'image' || o.aboutHeroKind === 'video' ? o.aboutHeroKind : 'auto',
+    aboutNameBadgeVisible: o.aboutNameBadgeVisible !== false,
+    aboutNameBadgeBottomDesktop: typeof o.aboutNameBadgeBottomDesktop === 'number' && isFinite(o.aboutNameBadgeBottomDesktop)
+      ? Math.min(600, Math.max(-600, Math.round(o.aboutNameBadgeBottomDesktop)))
+      : DEFAULT_SITE_SETTINGS.aboutNameBadgeBottomDesktop,
+    aboutNameBadgeBottomMobile: typeof o.aboutNameBadgeBottomMobile === 'number' && isFinite(o.aboutNameBadgeBottomMobile)
+      ? Math.min(600, Math.max(-600, Math.round(o.aboutNameBadgeBottomMobile)))
+      : DEFAULT_SITE_SETTINGS.aboutNameBadgeBottomMobile,
+    aboutNameBadgePadY: typeof o.aboutNameBadgePadY === 'number' && isFinite(o.aboutNameBadgePadY)
+      ? Math.min(24, Math.max(2, Math.round(o.aboutNameBadgePadY)))
+      : DEFAULT_SITE_SETTINGS.aboutNameBadgePadY,
+    homeIntroVideo: typeof o.homeIntroVideo === 'string' ? o.homeIntroVideo.trim() : '',
+    reportGalleryShowCustomerName: o.reportGalleryShowCustomerName !== false,
+    reportGalleryColsMobile: typeof o.reportGalleryColsMobile === 'number' && isFinite(o.reportGalleryColsMobile)
+      ? Math.min(4, Math.max(1, Math.round(o.reportGalleryColsMobile)))
+      : DEFAULT_SITE_SETTINGS.reportGalleryColsMobile,
+    reportGalleryColsDesktop: typeof o.reportGalleryColsDesktop === 'number' && isFinite(o.reportGalleryColsDesktop)
+      ? Math.min(6, Math.max(1, Math.round(o.reportGalleryColsDesktop)))
+      : DEFAULT_SITE_SETTINGS.reportGalleryColsDesktop,
   };
 }
 
@@ -1545,11 +1753,21 @@ function normReportTemplate(t: unknown, legacyStamps?: unknown): ReportTemplate 
 function normAgriVideos(s: unknown): AgriVideo[] {
   return arr<unknown>(s, []).map(v => {
     const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+    const posterTime = typeof o.posterTimeSec === 'number' && isFinite(o.posterTimeSec)
+      ? Math.max(0, o.posterTimeSec)
+      : (typeof o.poster_time_sec === 'number' && isFinite(o.poster_time_sec as number)
+        ? Math.max(0, o.poster_time_sec as number)
+        : undefined);
     return {
       id: (o.id as string) || uid(),
       title: normML(o.title),
       url: (o.url as string) || '',
       visible: o.visible !== false,
+      poster: typeof o.poster === 'string' ? o.poster : '',
+      posterTimeSec: posterTime,
+      autoplay: o.autoplay === true || o.autoplay === 1 || o.autoplay === '1',
+      loop: o.loop !== false && o.loop !== 0 && o.loop !== '0',
+      muted: o.muted === true || o.muted === 1 || o.muted === '1',
     };
   });
 }
@@ -1573,9 +1791,9 @@ function normCustomerReports(s: unknown): CustomerReport[] {
     return {
       id: (o.id as string) || uid(),
       reportType: (['soil', 'disease', 'insect'].includes(o.reportType as string) ? o.reportType : 'soil') as ReportType,
-      customerName: (o.customerName as string) || '',
+      customerName: normPersonML(o.customerName),
       customerPhone: (o.customerPhone as string) || '',
-      customerLocation: (o.customerLocation as string) || '',
+      customerLocation: normPersonML(o.customerLocation),
       attendanceDate: (o.attendanceDate as string) || '',
       examDate: (o.examDate as string) || '',
       images: arr<unknown>(o.images, []).filter((x): x is string => typeof x === 'string'),
@@ -1583,7 +1801,12 @@ function normCustomerReports(s: unknown): CustomerReport[] {
       description: normML(o.description),
       soilRows: arr<unknown>(o.soilRows, []).map(rr => {
         const x = (rr && typeof rr === 'object' ? rr : {}) as Record<string, unknown>;
-        return { id: (x.id as string) || uid(), test: normML(x.test), actual: normML(x.actual), ideal: normML(x.ideal) };
+        return {
+          id: (x.id as string) || uid(),
+          test: normML(x.test),
+          actual: normPersonML(x.actual),
+          ideal: normML(x.ideal),
+        };
       }),
       finalReport: normML(o.finalReport),
       createdAt: (o.createdAt as string) || new Date().toISOString(),
@@ -1673,11 +1896,11 @@ function normalizeProfile(p: unknown, fallback: CvProfile): CvProfile {
 }
 
 export function applyDefaultCatalog(data: AppData): AppData {
-  return {
+  return mergeSoilReportSamples({
     ...data,
     articleCategories: resolveArticleCategories(data.articleCategories),
     gfxCategories: resolveGfxCategories(data.gfxCategories),
-  };
+  });
 }
 
 export function loadAppData(): AppData {
@@ -1694,7 +1917,11 @@ export function loadAppData(): AppData {
     if (!cvDocs.find(d => d.id === 'agri')) cvDocs.unshift(defaultDocs[0]);
     if (!cvDocs.find(d => d.id === 'dev')) cvDocs.splice(1, 0, defaultDocs[1]);
 
-    const skills = arr<Skill>(src.skills, DEFAULT_DATA.skills).map(s => ({ ...s, size: s.size ?? 26 }));
+    const skills = arr<Skill>(src.skills, DEFAULT_DATA.skills).map(s => ({
+      ...s,
+      size: s.size ?? 26,
+      showOnAbout: s.showOnAbout !== false,
+    }));
 
     const normAiVault = arr<unknown>(src.aiVault, []).map((v: unknown) => {
       if (!v || typeof v !== 'object') return null;
@@ -1743,7 +1970,18 @@ export function loadAppData(): AppData {
       gfxGallery: arr(src.gfxGallery, DEFAULT_DATA.gfxGallery),
       gfxCategories: normGfxCats,
       aiVault: normAiVault.length ? normAiVault : DEFAULT_DATA.aiVault,
-      softwareSnippets: arr(src.softwareSnippets, DEFAULT_DATA.softwareSnippets),
+      softwareSnippets: arr(src.softwareSnippets, DEFAULT_DATA.softwareSnippets).map((p: unknown) => {
+        const o = (p && typeof p === 'object' ? p : {}) as Record<string, unknown>;
+        return {
+          id: (o.id as string) || undefined,
+          title: normML(o.title),
+          desc: normML(o.desc),
+          codeHtml: (o.codeHtml as string) || '',
+          codeCss: (o.codeCss as string) || '',
+          codeJs: (o.codeJs as string) || '',
+          category: (o.category as string) || '',
+        } as SoftwareSnippet;
+      }),
       webProjects: arr(src.webProjects, DEFAULT_DATA.webProjects).map((p: unknown) => {
         const o = (p && typeof p === 'object' ? p : {}) as Record<string, unknown>;
         return {
@@ -1760,7 +1998,10 @@ export function loadAppData(): AppData {
           thumbSize: typeof o.thumbSize === 'number' ? o.thumbSize : 220,
           googlePlayUrl: (o.googlePlayUrl as string) || '',
           appleStoreUrl: (o.appleStoreUrl as string) || '',
+          googlePlayVisible: o.googlePlayVisible !== false,
+          appleStoreVisible: o.appleStoreVisible !== false,
           textColor: (o.textColor as string) || '',
+          imgBgColor: (o.imgBgColor as string) || '',
         } as WebProject;
       }),
       webGridSettings: { ...DEFAULT_WEB_GRID, ...(src.webGridSettings && typeof src.webGridSettings === 'object' ? src.webGridSettings as Partial<WebGridSettings> : {}) },
@@ -1784,6 +2025,39 @@ export function loadAppData(): AppData {
       articleGridSettings: { ...DEFAULT_ARTICLE_GRID, ...(src.articleGridSettings && typeof src.articleGridSettings === 'object' ? src.articleGridSettings as Partial<ArticleGridSettings> : {}) },
       watermarkImg: (src.watermarkImg as string) || '',
       watermarkOpacity: typeof src.watermarkOpacity === 'number' ? src.watermarkOpacity : 0.15,
+      agriWalkthrough: (() => {
+        const raw = src.agriWalkthrough && typeof src.agriWalkthrough === 'object'
+          ? src.agriWalkthrough as Record<string, unknown>
+          : {};
+        return {
+          enabled: raw.enabled !== false,
+          autoplay: raw.autoplay === true,
+          defaultSpeed: typeof raw.defaultSpeed === 'number'
+            ? Math.max(0.5, Math.min(3, raw.defaultSpeed))
+            : 1,
+          plantImages: arr<string>(raw.plantImages, DEFAULT_DATA.agriWalkthrough?.plantImages || []),
+          steps: arr<unknown>(raw.steps, []).map(value => {
+            const step = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+            const audioRaw = step.audio && typeof step.audio === 'object'
+              ? step.audio as Record<string, unknown>
+              : {};
+            return {
+              id: String(step.id || ''),
+              enabled: step.enabled !== false,
+              title: step.title ? normML(step.title) : undefined,
+              body: step.body ? normML(step.body) : undefined,
+              durationMs: typeof step.durationMs === 'number'
+                ? Math.max(1500, Math.min(30000, step.durationMs))
+                : undefined,
+              audio: {
+                ar: typeof audioRaw.ar === 'string' ? audioRaw.ar : '',
+                en: typeof audioRaw.en === 'string' ? audioRaw.en : '',
+                de: typeof audioRaw.de === 'string' ? audioRaw.de : '',
+              },
+            } as WalkthroughStepSettings;
+          }).filter(step => step.id),
+        } as AgriWalkthroughSettings;
+      })(),
       fileNodes: arr<FileNode>(src.fileNodes, []).map((n: unknown) => {
         const o = (n && typeof n === 'object' ? n : {}) as Record<string, unknown>;
         return {
@@ -1842,13 +2116,52 @@ export function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+/** تصغير صورة قبل التخزين المحلي — يمنع تجاوز حد TEXT في قاعدة البيانات (~64KB). */
+export async function compressImageFileForStorage(
+  file: File,
+  maxWidth = 800,
+  mime: 'image/png' | 'image/jpeg' = 'image/png',
+): Promise<string> {
+  if (!file.type.startsWith('image/')) return readFileAsDataUrl(file);
+
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        readFileAsDataUrl(file).then(resolve).catch(reject);
+        return;
+      }
+      if (mime === 'image/jpeg') {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+      }
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL(mime, mime === 'image/jpeg' ? 0.88 : undefined));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      readFileAsDataUrl(file).then(resolve).catch(reject);
+    };
+    img.src = objectUrl;
+  });
+}
+
 /**
  * Upload a media file to Hostinger (api/upload.php).
  * Returns public URL on success, null if not logged in or upload failed.
  */
 export async function uploadMediaFile(
   file: File,
-  folder: 'projects' | 'books' | 'reports' | 'gfx' | 'general' | 'skills' | 'cv' = 'general',
+  folder: 'projects' | 'books' | 'reports' | 'gfx' | 'general' | 'skills' | 'cv' | 'walkthrough' = 'general',
 ): Promise<string | null> {
   const token = getApiToken();
   if (!token) return null;
@@ -1856,7 +2169,7 @@ export async function uploadMediaFile(
     const fd = new FormData();
     fd.append('file', file);
     fd.append('folder', folder);
-    const res = await fetch('./api/upload.php', {
+    const res = await fetch('/api/upload.php', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: fd,
@@ -1875,7 +2188,7 @@ export async function uploadMediaFile(
  */
 export async function loginToApi(username: string, password: string): Promise<boolean> {
   try {
-    const res = await fetch('./api/auth.php', {
+    const res = await fetch('/api/auth.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
@@ -1885,6 +2198,42 @@ export async function loginToApi(username: string, password: string): Promise<bo
     if (json.token) { setApiToken(json.token); return true; }
     return false;
   } catch { return false; }
+}
+
+/**
+ * يستعيد جلسة الإدارة من التوكن الحالي أو من HttpOnly refresh cookie.
+ * لا تُخزّن كلمة المرور في المتصفح أو في ملفات JavaScript.
+ */
+export async function restoreApiSession(): Promise<boolean> {
+  const token = getApiToken();
+  try {
+    const res = await fetch('/api/auth.php', {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      clearApiToken();
+      return false;
+    }
+    const json = await res.json() as { token?: string };
+    if (!json.token) {
+      clearApiToken();
+      return false;
+    }
+    setApiToken(json.token);
+    return true;
+  } catch {
+    return !!token;
+  }
+}
+
+/** إنهاء جلسة الخادم وحذف التوكن المحلي والـ HttpOnly cookie. */
+export async function logoutFromApi(): Promise<void> {
+  try {
+    await fetch('/api/auth.php', { method: 'DELETE', credentials: 'same-origin' });
+  } catch { /* حذف التوكن المحلي يبقى مضموناً */ }
+  clearApiToken();
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1898,9 +2247,19 @@ export async function loginToApi(username: string, password: string): Promise<bo
  */
 export async function saveAppData(data: AppData): Promise<boolean> {
   const normalized = applyDefaultCatalog(data);
+  const stripTplImgForLocal = (rt: ReportTemplate): ReportTemplate => {
+    const keys = ['headerLogo', 'engSignature', 'engStamp', 'paidStamp'] as const;
+    const out = { ...rt };
+    for (const k of keys) {
+      const v = out[k];
+      if (v.startsWith('data:') || v.startsWith('blob:')) out[k] = '';
+    }
+    return out;
+  };
   /* لا نخزّن PDF ضخمة base64 في localStorage — فقط روابط الخادم */
   const forLocal: AppData = {
     ...normalized,
+    reportTemplate: stripTplImgForLocal(normalized.reportTemplate),
     cvDocs: normalized.cvDocs.map(d => {
       if (!d.pdfFiles) return d;
       const pf: Partial<Record<LangKey, string>> = {};
@@ -1917,7 +2276,7 @@ export async function saveAppData(data: AppData): Promise<boolean> {
   const token = getApiToken();
   if (!token) return false;
   try {
-    const res = await fetch('./api/data.php', {
+    const res = await fetch('/api/data.php', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1931,6 +2290,26 @@ export async function saveAppData(data: AppData): Promise<boolean> {
   }
 }
 
+/** جلب إعدادات الثيم فقط من السيرفر — خفيف للتحديث الفوري للزوار */
+export async function fetchSiteSettingsFromDb(): Promise<SiteSettings | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch('/api/data.php?section=siteSettings', {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!res.ok) return null;
+    const raw = await res.json() as { ok?: boolean; dbIsSeeded?: boolean; siteSettings?: unknown };
+    if (!raw?.ok || !raw.dbIsSeeded || !raw.siteSettings) return null;
+    return normSiteSettings(raw.siteSettings);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * يجلب البيانات من قاعدة بيانات Hostinger.
  * يُرجع null إذا فشل الطلب (سيستخدم الـ localStorage كبديل).
@@ -1940,7 +2319,7 @@ export async function loadAppDataFromDb(): Promise<AppData | null> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-    const res = await fetch('./api/data.php', {
+    const res = await fetch('/api/data.php', {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
@@ -1994,6 +2373,23 @@ export async function loadAppDataFromDb(): Promise<AppData | null> {
         merged[k] = (local as Record<string, unknown>)[k];
       }
     }
+    if (dbData.reportTemplate && local.reportTemplate) {
+      const dbRt = dbData.reportTemplate as Partial<ReportTemplate>;
+      const localRt = local.reportTemplate;
+      const pickTplImg = (dbVal?: string, localVal?: string) => {
+        const d = (dbVal || '').trim();
+        const l = (localVal || '').trim();
+        if (d && (!l || d.length >= l.length)) return d;
+        return l || d;
+      };
+      merged.reportTemplate = {
+        ...normReportTemplate(merged.reportTemplate),
+        headerLogo: pickTplImg(dbRt.headerLogo, localRt.headerLogo),
+        engSignature: pickTplImg(dbRt.engSignature, localRt.engSignature),
+        engStamp: pickTplImg(dbRt.engStamp, localRt.engStamp),
+        paidStamp: pickTplImg(dbRt.paidStamp, localRt.paidStamp),
+      };
+    }
     const mergedStr = JSON.stringify(merged);
     const src = JSON.parse(mergedStr) as Partial<AppData> & Record<string, unknown>;
 
@@ -2036,7 +2432,7 @@ export async function fetchCvExportFromDb(docId: string): Promise<{
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch('./api/data.php', {
+    const res = await fetch('/api/data.php', {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
@@ -2093,8 +2489,10 @@ function normGfxProjectItem(o: unknown): GfxProjectItem {
     desc: normML(x.desc),
     mainImg: (x.mainImg as string) || '',
     mainImgNoWm: !!x.mainImgNoWm,
+    mainImgIsVideo: !!x.mainImgIsVideo,
     images: arr<string>(x.images, []),
     imagesNoWm: arr<boolean>(x.imagesNoWm, []),
+    imagesIsVideo: arr<boolean>(x.imagesIsVideo, []),
     videoUrl: (x.videoUrl as string) || '',
     usedSkillsIds: arr<string>(x.usedSkillsIds, []),
     cvSettings: {
@@ -2108,6 +2506,8 @@ function normGfxProjectItem(o: unknown): GfxProjectItem {
     glbPrice: (x.glbPrice as string) || undefined,
     glbCurrency: (x.glbCurrency as string) || undefined,
     glbFreeUrl: (x.glbFreeUrl as string) || undefined,
+    glbViewSettings: normGfxModel3dSettings(x.glbViewSettings),
+    downloadLinks: normGfxDownloadLinks(x.downloadLinks),
     sourceFileUrl: (x.sourceFileUrl as string) || undefined,
     sourceFileVisible: x.sourceFileVisible !== false,
     sourceFilePassword: (x.sourceFilePassword as string) || undefined,
@@ -2182,11 +2582,19 @@ export function mergeSiteContent(base: AppData, patch: Partial<AppData>): AppDat
 }
 
 const SITE_CONTENT_JSON_URL = './data.json';
+const DATA_JSON_SKIP_KEY = 'eng_skip_data_json_v1';
 
-/** جلب data.json من السيرفر — يُحدَّث فور رفع الملف عبر SFTP */
+/** جلب data.json من السيرفر — يُحدَّث فور رفع الملف عبر SFTP (اختياري إن وُجد MySQL) */
 export async function loadSiteContentFromJson(url = SITE_CONTENT_JSON_URL): Promise<Partial<AppData> | null> {
   try {
+    if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(DATA_JSON_SKIP_KEY) === '1') {
+      return null;
+    }
     const res = await fetch(`${url}?t=${Date.now()}`, { cache: 'no-store' });
+    if (res.status === 404) {
+      try { sessionStorage.setItem(DATA_JSON_SKIP_KEY, '1'); } catch { /* ignore */ }
+      return null;
+    }
     if (!res.ok) return null;
     const raw = await res.json();
     return contentPatchFromJson(raw);

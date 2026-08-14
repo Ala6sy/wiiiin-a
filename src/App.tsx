@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { LangCode, translations, T } from "./translations";
 import { HeroNameDisplay } from "./HeroNameDisplay";
@@ -26,9 +26,11 @@ import {
   mergeSiteContent,
   applyDefaultCatalog,
   saveAppData,
+  fetchSiteSettingsFromDb,
   loginToApi,
+  restoreApiSession,
+  logoutFromApi,
   getApiToken,
-  clearApiToken,
   uploadMediaFile,
   readFileAsDataUrl,
   ADMIN_EMAIL,
@@ -48,11 +50,17 @@ import {
   cvDocLabel,
   CV_BTN_ICON_COLOR,
 } from "./appData";
-import { resolveImageSrc, resolveVideoEmbedSrc, normalizeImageUrlForStorage } from "./mediaUrl";
+import { resolveImageSrc, resolveVideoEmbedSrc, normalizeImageUrlForStorage, resolveAboutHeroMedia, extractDriveFileId, DEFAULT_ABOUT_HERO, resolveVideoPlaybackSrc, isGoogleDriveUrl, isVideoMediaUrl, normalizeVideoUrlForStorage } from "./mediaUrl";
+import { normalizeExternalUrl, isUsableProjectLink, webProjThumbStyle, webProjImgFit } from "./webProjectUtils";
+import { getGfxMediaSlides, getGfxProjectSlides, gfxModelAsMain, gfxItemModelUrl, gfx3dPreviewActive } from "./gfxMedia";
+import { GfxMediaSlide } from "./GfxMediaSlide";
+import { GfxModelViewer } from "./GfxModelViewer";
+import { gfxViewSettingsKey, resolveGlbViewSettings, settingsForGalleryCardPreview } from "./gfxModel3d";
 import { bookGridStyleResponsive, articleGridStyleResponsive, gfxGridStyleResponsive, webGridStyleResponsive } from "./GridFontControls";
-import { GfxSourceFileDownload } from "./GfxSourceFileDownload";
+import { GfxProjectDownloads } from "./GfxProjectDownloads";
 import { BookAccessRibbon, BookCover } from "./BookAccessRibbon";
 import { useIsMobile } from "./hooks/use-mobile";
+import { useThreeBackground } from "./useThreeBackground";
 import { ContentAdmin } from "./ContentAdmin";
 import { FileExplorerAdmin } from "./FileExplorerAdmin";
 import { PlantDiagnostic } from "./PlantDiagnostic";
@@ -64,10 +72,28 @@ import { CvRenderer } from "./CvRenderer";
 import { stripHtml } from "./RichEditor";
 import { SkillIcon } from "./SkillIcon";
 import {
+  LAB_IFRAME_SANDBOX,
+  buildLabPreviewSrcdoc,
+  detectLabPreviewDevice,
+  downloadLabAsHtml,
+  downloadLabAsPdf,
+  openLabStandalone,
+  downloadViaBlob,
+} from "./labDownloads";
+import {
+  type VisitorLabProject,
+  type LabGridItem,
+  loadVisitorLabProjects,
+  newLabLocalId,
+  submitVisitorLabProject,
+  syncVisitorLabProjects,
+  upsertVisitorLabProject,
+} from "./labVisitorSubmissions";
+import {
   CV_EXPORT_PX,
 } from "./cvPdfExport";
 import { waitForCvExportReady, waitForCvPagedLayout } from "./cvExportReady";
-import { trackPageView, trackHeartbeat, trackCvDownload, trackFileDownload } from "./analytics";
+import { trackPageView, trackPageDuration, trackHeartbeat, trackCvDownload, trackFileDownload } from "./analytics";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
 import { printCvFromRoot, isMobileCvDevice } from "./cvBrowserPrint";
 import { normalizeSkillIconList, restoreDefaultSkillIcons } from "./skillIconDefaults";
@@ -78,6 +104,10 @@ import {
 } from "./cvVisitorDownload";
 import { SeasonNowPanel } from "./SeasonNowPanel";
 import {
+  resolveBodyTextColor, resolveMutedTextColor, resolveHeadingTextColor,
+  pickReadableText,
+} from "./siteThemeOptions";
+import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor,
   useSensor, useSensors, DragEndEvent,
 } from '@dnd-kit/core';
@@ -86,6 +116,23 @@ import {
   useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS as DndCSS } from '@dnd-kit/utilities';
+import {
+  type NavSnapshot,
+  type SitePortal,
+  agriTabKeyToIndex,
+  agriTabIndexToKey,
+  buildShareUrl,
+  navToPath,
+  pathToNav,
+  readNavFromBrowser,
+  writeNavToBrowser,
+} from './siteRoutes';
+import {
+  getStoredVisitorLocation,
+  getVisitorGpsDecision,
+  requestVisitorLocation,
+  saveVisitorGpsDecision,
+} from './visitorLocation';
 
 /* ── helpers ─────────────────────────────────────────── */
 declare global {
@@ -114,296 +161,133 @@ function saveLang(l: LangCode) {
   localStorage.setItem(LANG_PREF_KEY, l);
 }
 
-type Portal =
-  | "home"
-  | "about"
-  | "agri"
-  | "graphics"
-  | "software"
-  | "cv"
-  | "admin";
+/** وسائط صورة السيرة — فيديو عبر proxy، وعند الفشل iframe لـ Drive */
+function AboutDarkHeroMedia({
+  media,
+  kind,
+  alt,
+}: {
+  media?: string;
+  kind?: 'auto' | 'image' | 'video';
+  alt: string;
+}) {
+  const hero = resolveAboutHeroMedia(media, kind || 'auto');
+  const driveId = extractDriveFileId(media || '');
+  const [mode, setMode] = useState<'video' | 'iframe' | 'image'>(
+    hero.kind === 'video' ? 'video' : 'image',
+  );
+
+  useEffect(() => {
+    setMode(hero.kind === 'video' ? 'video' : 'image');
+  }, [hero.kind, hero.src, media, kind]);
+
+  if (mode === 'video') {
+    return (
+      <video
+        key={hero.src}
+        className="about-dark-photo-img about-dark-photo-video"
+        src={hero.src}
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="auto"
+        onError={() => setMode(driveId ? 'iframe' : 'image')}
+        aria-label={alt}
+      />
+    );
+  }
+
+  if (mode === 'iframe' && driveId) {
+    return (
+      <iframe
+        className="about-dark-photo-img about-dark-photo-video about-dark-photo-iframe"
+        src={`https://drive.google.com/file/d/${driveId}/preview`}
+        title={alt}
+        allow="autoplay; encrypted-media; fullscreen"
+        referrerPolicy="strict-origin-when-cross-origin"
+      />
+    );
+  }
+
+  return (
+    <img
+      src={hero.kind === 'image' ? hero.src : DEFAULT_ABOUT_HERO}
+      alt={alt}
+      className="about-dark-photo-img"
+    />
+  );
+}
+
+/** فيديو تعريفي اختياري في الصفحة الرئيسية — اضغط لملء الشاشة */
+function HomeIntroVideo({ url }: { url: string }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const raw = (url || '').trim();
+  if (!raw) return null;
+
+  const embed = resolveVideoEmbedSrc(raw);
+  const isYtOrVimeo = /youtube\.com|youtu\.be|vimeo\.com/i.test(raw);
+  const useFileVideo = !isYtOrVimeo && (
+    isVideoMediaUrl(raw)
+    || isGoogleDriveUrl(raw)
+    || /^data:video\//i.test(raw)
+    || raw.startsWith('blob:')
+  );
+  const fileSrc = useFileVideo ? resolveVideoPlaybackSrc(raw) : '';
+
+  const enterFullscreen = () => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const anyEl = el as HTMLElement & {
+      webkitRequestFullscreen?: () => void;
+      msRequestFullscreen?: () => void;
+    };
+    if (anyEl.requestFullscreen) void anyEl.requestFullscreen();
+    else if (anyEl.webkitRequestFullscreen) anyEl.webkitRequestFullscreen();
+    else if (anyEl.msRequestFullscreen) anyEl.msRequestFullscreen();
+  };
+
+  if (!fileSrc && !embed) return null;
+
+  return (
+    <div
+      className="home-intro-video"
+      ref={wrapRef}
+      role="button"
+      tabIndex={0}
+      onClick={enterFullscreen}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          enterFullscreen();
+        }
+      }}
+      aria-label="Fullscreen video"
+      title={raw}
+    >
+      {fileSrc ? (
+        <video src={fileSrc} muted loop autoPlay playsInline preload="metadata" />
+      ) : (
+        <iframe
+          src={embed!}
+          title="Site intro video"
+          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+          allowFullScreen
+        />
+      )}
+      <div className="home-intro-video-hint" aria-hidden="true">
+        <i className="fa-solid fa-expand" />
+      </div>
+    </div>
+  );
+}
+
+type Portal = SitePortal;
 
 /* ═══════════════════════════════════════════════════════
-   THREE.JS BACKGROUND
+   THREE.JS — see useThreeBackground.ts (خلفية واحدة، آمنة لـ WebGL)
 ══════════════════════════════════════════════════════════ */
-/* Default Three.js CDN URL used in index.html */
 export const DEFAULT_THREE_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-
-function useThreeBackground(
-  containerRef: React.RefObject<HTMLDivElement | null>,
-  theme: 'dark' | 'light',
-) {
-  useEffect(() => {
-    const THREE = window.THREE;
-    if (!THREE || !containerRef.current) return;
-    const isDark = theme === 'dark';
-    const container = containerRef.current;
-    let rafId: number;
-    let renderer: any = null;
-    let mouseX = 0, mouseY = 0;
-
-    const onMouseMove = (e: MouseEvent) => {
-      mouseX = (e.clientX / window.innerWidth - 0.5) * 2;
-      mouseY = (e.clientY / window.innerHeight - 0.5) * 2;
-    };
-    window.addEventListener("mousemove", onMouseMove);
-
-    try {
-      /* ── Scene & Camera ─────────────────────────── */
-      const scene = new THREE.Scene();
-      if (isDark) scene.fog = new THREE.FogExp2(0x000c1a, 0.032);
-
-      const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 200);
-      camera.position.set(0, 0, 12);
-
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setClearColor(0x000000, 0);
-      container.appendChild(renderer.domElement);
-
-      /* ── Theme colours ──────────────────────────── */
-      const ptColor    = isDark ? 0x4488ff : 0x1144cc;
-      const lineColor  = isDark ? 0x1144aa : 0x2255bb;
-      const lineOp     = isDark ? 0.18 : 0.28;
-      const shapeColor = isDark ? 0x2266ff : 0x1155bb;
-      const shapeOp    = isDark ? 0.35 : 0.5;
-      const ringColor  = isDark ? 0x1155cc : 0x2266cc;
-      const ringOp     = isDark ? 0.3 : 0.4;
-
-      /* ── Particles with connection lines ────────── */
-      const PARTICLE_COUNT = 500;
-      const positions: number[] = [];
-      const velocities: number[] = [];
-      for (let i = 0; i < PARTICLE_COUNT; i++) {
-        const r = 10 + Math.random() * 6;
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(2 * Math.random() - 1);
-        positions.push(
-          r * Math.sin(phi) * Math.cos(theta),
-          r * Math.sin(phi) * Math.sin(theta),
-          r * Math.cos(phi),
-        );
-        velocities.push(
-          (Math.random() - 0.5) * 0.006,
-          (Math.random() - 0.5) * 0.006,
-          (Math.random() - 0.5) * 0.006,
-        );
-      }
-      const ptGeo = new THREE.BufferGeometry();
-      ptGeo.setAttribute("position", new THREE.Float32BufferAttribute([...positions], 3));
-      const ptMat = new THREE.PointsMaterial({ color: ptColor, size: 0.12, transparent: true, opacity: isDark ? 0.75 : 0.85, sizeAttenuation: true });
-      const particles = new THREE.Points(ptGeo, ptMat);
-      scene.add(particles);
-
-      /* ── Line mesh between close particles ─────── */
-      const LINE_THRESHOLD = 3.8;
-      const linePosArr = new Float32Array(PARTICLE_COUNT * PARTICLE_COUNT * 6);
-      const lineGeo = new THREE.BufferGeometry();
-      const linePos = new THREE.BufferAttribute(linePosArr, 3);
-      lineGeo.setAttribute("position", linePos);
-      const lineMat = new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({ color: lineColor, transparent: true, opacity: lineOp }));
-      scene.add(lineMat);
-
-      /* ── Wireframe floating shapes ──────────────── */
-      const shapeDefs = [
-        { geo: new THREE.IcosahedronGeometry(1.4, 1), x: 4, y: 2, z: -2 },
-        { geo: new THREE.OctahedronGeometry(0.9, 1), x: -4.5, y: -1.5, z: -1 },
-        { geo: new THREE.TetrahedronGeometry(0.7, 0), x: 3, y: -3, z: 2 },
-        { geo: new THREE.IcosahedronGeometry(0.6, 0), x: -2.5, y: 3, z: 1 },
-      ];
-      const meshes: any[] = [];
-      shapeDefs.forEach((def) => {
-        const edges = new THREE.EdgesGeometry(def.geo);
-        const mat2 = new THREE.LineBasicMaterial({ color: shapeColor, transparent: true, opacity: shapeOp });
-        const mesh = new THREE.LineSegments(edges, mat2);
-        mesh.position.set(def.x, def.y, def.z);
-        scene.add(mesh);
-        meshes.push(mesh);
-      });
-
-      /* ── Central glowing rings ───────────────────── */
-      const ringMat = new THREE.MeshBasicMaterial({ color: ringColor, transparent: true, opacity: ringOp });
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(3.6, 0.018, 2, 140), ringMat);
-      ring.rotation.x = Math.PI / 3;
-      scene.add(ring);
-      const ring2 = new THREE.Mesh(
-        new THREE.TorusGeometry(2.3, 0.012, 2, 100),
-        new THREE.MeshBasicMaterial({ color: isDark ? 0x3377ff : 0x4488dd, transparent: true, opacity: isDark ? 0.2 : 0.3 }),
-      );
-      ring2.rotation.x = -Math.PI / 4;
-      ring2.rotation.z = Math.PI / 6;
-      scene.add(ring2);
-
-      /* ── Animate ────────────────────────────────── */
-      let t = 0;
-      function animate() {
-        rafId = requestAnimationFrame(animate);
-        t += 0.005;
-        const pa = ptGeo.attributes.position.array as Float32Array;
-        for (let i = 0; i < PARTICLE_COUNT; i++) {
-          pa[i * 3] += velocities[i * 3];
-          pa[i * 3 + 1] += velocities[i * 3 + 1];
-          pa[i * 3 + 2] += velocities[i * 3 + 2];
-          const dist = Math.sqrt(pa[i * 3] ** 2 + pa[i * 3 + 1] ** 2 + pa[i * 3 + 2] ** 2);
-          if (dist > 16) { pa[i * 3] *= 0.97; pa[i * 3 + 1] *= 0.97; pa[i * 3 + 2] *= 0.97; }
-        }
-        ptGeo.attributes.position.needsUpdate = true;
-        let lineIdx = 0;
-        const la = linePos.array as Float32Array;
-        for (let i = 0; i < PARTICLE_COUNT && lineIdx < la.length - 12; i++) {
-          for (let j = i + 1; j < PARTICLE_COUNT && lineIdx < la.length - 6; j++) {
-            const dx = pa[i * 3] - pa[j * 3], dy = pa[i * 3 + 1] - pa[j * 3 + 1], dz = pa[i * 3 + 2] - pa[j * 3 + 2];
-            if (Math.sqrt(dx * dx + dy * dy + dz * dz) < LINE_THRESHOLD) {
-              la[lineIdx++] = pa[i * 3]; la[lineIdx++] = pa[i * 3 + 1]; la[lineIdx++] = pa[i * 3 + 2];
-              la[lineIdx++] = pa[j * 3]; la[lineIdx++] = pa[j * 3 + 1]; la[lineIdx++] = pa[j * 3 + 2];
-            }
-          }
-        }
-        lineGeo.setDrawRange(0, lineIdx / 3);
-        linePos.needsUpdate = true;
-        meshes.forEach((m, idx) => {
-          m.rotation.x += 0.003 + idx * 0.0008;
-          m.rotation.y += 0.004 + idx * 0.0006;
-          m.position.y += Math.sin(t + idx) * 0.003;
-        });
-        ring.rotation.z += 0.002;
-        ring2.rotation.y += 0.0015;
-        camera.position.x += (mouseX * 1.2 - camera.position.x) * 0.02;
-        camera.position.y += (-mouseY * 0.8 - camera.position.y) * 0.02;
-        camera.lookAt(0, 0, 0);
-        renderer.render(scene, camera);
-      }
-      animate();
-
-      const onResize = () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-      };
-      window.addEventListener("resize", onResize);
-
-      return () => {
-        cancelAnimationFrame(rafId);
-        window.removeEventListener("resize", onResize);
-        window.removeEventListener("mousemove", onMouseMove);
-        if (renderer && container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
-        renderer?.dispose();
-      };
-    } catch {
-      window.removeEventListener("mousemove", onMouseMove);
-      return () => { cancelAnimationFrame(rafId); };
-    }
-  }, [theme]);
-}
-
-/* ═══════════════════════════════════════════════════════
-   THREE.JS PHOTO ORBIT (About Page)
-══════════════════════════════════════════════════════════ */
-function usePhotoOrbit(
-  containerRef: React.RefObject<HTMLDivElement | null>,
-  active: boolean,
-) {
-  useEffect(() => {
-    if (!active) return;
-    const THREE = window.THREE;
-    if (!THREE || !containerRef.current) return;
-    const container = containerRef.current;
-    let rafId: number;
-    let renderer: any = null;
-
-    try {
-      const W = container.offsetWidth || 340;
-      const H = container.offsetHeight || 440;
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setSize(W, H);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      Object.assign(renderer.domElement.style, {
-        position: "absolute",
-        top: "0",
-        left: "0",
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-        zIndex: "1",
-      });
-      container.appendChild(renderer.domElement);
-
-      const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 100);
-      camera.position.z = 5;
-
-      const mkRing = (
-        r: number,
-        tube: number,
-        col: number,
-        op: number,
-        rx: number,
-        rz: number,
-      ) => {
-        const m = new THREE.Mesh(
-          new THREE.TorusGeometry(r, tube, 12, 120),
-          new THREE.MeshBasicMaterial({
-            color: col,
-            transparent: true,
-            opacity: op,
-          }),
-        );
-        m.rotation.x = rx;
-        m.rotation.z = rz;
-        scene.add(m);
-        return m;
-      };
-      const ring1 = mkRing(2.0, 0.013, 0x4488ff, 0.65, Math.PI / 3, 0.2);
-      const ring2 = mkRing(2.6, 0.009, 0x2255cc, 0.4, -Math.PI / 4, -0.4);
-      const ring3 = mkRing(1.6, 0.016, 0x88bbff, 0.3, Math.PI / 5, Math.PI / 4);
-
-      const dotGeo = new THREE.SphereGeometry(0.035, 8, 8);
-      const dots = Array.from({ length: 14 }, (_, i) => {
-        const mesh = new THREE.Mesh(
-          dotGeo,
-          new THREE.MeshBasicMaterial({ color: 0x99ccff }),
-        );
-        const angle = (i / 14) * Math.PI * 2;
-        const radius = 2.0 + (i % 3) * 0.25;
-        return { mesh, angle, radius, speed: 0.006 + (i % 5) * 0.002 };
-      });
-      dots.forEach((d) => scene.add(d.mesh));
-
-      let t = 0;
-      const animate = () => {
-        rafId = requestAnimationFrame(animate);
-        t += 0.007;
-        ring1.rotation.y = t * 0.5;
-        ring2.rotation.y = -t * 0.3;
-        ring3.rotation.y = t * 0.45;
-        ring3.rotation.x = Math.PI / 5 + t * 0.1;
-        dots.forEach((d) => {
-          const a = d.angle + t * d.speed * 80;
-          d.mesh.position.set(
-            Math.cos(a) * d.radius,
-            Math.sin(a) * 0.8,
-            Math.sin(a * 0.6) * 0.5,
-          );
-        });
-        renderer.render(scene, camera);
-      };
-      animate();
-    } catch {
-      /* WebGL unavailable */
-    }
-
-    return () => {
-      cancelAnimationFrame(rafId);
-      if (renderer) {
-        renderer.dispose();
-        const cv = renderer.domElement;
-        if (cv?.parentNode) cv.parentNode.removeChild(cv);
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active]);
-}
 
 /* ═══════════════════════════════════════════════════════
    SORTABLE SKILL ROW
@@ -509,6 +393,26 @@ function SortableSkillItem({ skill: s, index: i, total, lang, globalSkillSize, o
         </div>
       </div>
 
+      {/* Show on About page */}
+      <button
+        type="button"
+        className="btn-outline-sm skill-about-visibility-btn"
+        onClick={() => onChange(s.id, { showOnAbout: s.showOnAbout === false })}
+        title={
+          s.showOnAbout === false
+            ? (lang === 'ar' ? 'مخفية في صفحة السيرة — اضغط للإظهار' : lang === 'de' ? 'In Über-Seite ausgeblendet' : 'Hidden on About — click to show')
+            : (lang === 'ar' ? 'ظاهرة في صفحة السيرة — اضغط للإخفاء' : lang === 'de' ? 'Auf Über-Seite sichtbar' : 'Visible on About — click to hide')
+        }
+        style={{
+          padding: '6px 8px',
+          opacity: s.showOnAbout === false ? 0.45 : 1,
+          color: s.showOnAbout === false ? '#f66' : '#0af',
+          borderColor: s.showOnAbout === false ? 'rgba(255,100,100,0.35)' : 'rgba(0,170,255,0.35)',
+        }}
+      >
+        <i className={`fa-solid ${s.showOnAbout === false ? 'fa-eye-slash' : 'fa-eye'}`} />
+      </button>
+
       {/* Up / Down arrows */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         <button
@@ -540,24 +444,32 @@ function SortableSkillItem({ skill: s, index: i, total, lang, globalSkillSize, o
 ══════════════════════════════════════════════════════════ */
 export default function App() {
   const isMobileView = useIsMobile();
+  const initialNav = readNavFromBrowser();
   const [lang, setLang] = useState<LangCode>(detectLang);
-  const [portal, setPortal] = useState<Portal>("home");
+  const [portal, setPortal] = useState<Portal>(initialNav?.portal ?? "home");
   const [adminGate, setAdminGate] = useState(false);
   const [adminLoggedIn, setAdminLoggedIn] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const langDdRef = useRef<HTMLDivElement>(null);
   const [langMenuStyle, setLangMenuStyle] = useState<React.CSSProperties>({});
   const [data, setData] = useState<AppData>(loadAppData);
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
   const [activeSkill, setActiveSkill] = useState<string | null>(null);
-  const [agriTab, setAgriTab] = useState(0);
-  const [gfxTab, setGfxTab] = useState(0);
+  const [agriTab, setAgriTab] = useState(() => {
+    if (initialNav?.agriTabKey) {
+      return agriTabKeyToIndex(initialNav.agriTabKey, !!loadAppData().aiDiagnosticsEnabled);
+    }
+    return initialNav?.agriTab ?? 0;
+  });
+  const [gfxTab, setGfxTab] = useState(initialNav?.gfxTab ?? 0);
   const [adminPanel, setAdminPanel] = useState(0);
   const [selectedSnippetIdx, setSelectedSnippetIdx] = useState<number | null>(
     null,
   );
   const [snippetHtml, setSnippetHtml] = useState("");
   const [snippetCss, setSnippetCss] = useState("");
-  const [activeCat, setActiveCat] = useState<string | null>(null);
+  const [activeCat, setActiveCat] = useState<string | null>(initialNav?.activeCat ?? null);
   const [cvDocId, setCvDocId] = useState<string>("");
   const cvLang = lang as LangKey;
   const [printCvMount, setPrintCvMount] = useState<{
@@ -571,12 +483,17 @@ export default function App() {
   const [openPrompt, setOpenPrompt] = useState<number | null>(null);
 
   // GFX 3-tier & full-page project view
-  const [gfxSelCatId, setGfxSelCatId] = useState<string>("");
-  const [gfxSelSubId, setGfxSelSubId] = useState<string>("");
+  const [gfxSelCatId, setGfxSelCatId] = useState<string>(initialNav?.gfxSelCatId ?? "");
+  const [gfxSelSubId, setGfxSelSubId] = useState<string>(initialNav?.gfxSelSubId ?? "");
   const [gfxProjectPage, setGfxProjectPage] = useState<GfxProjectItem | null>(null);
   const [gfxCarouselIdx, setGfxCarouselIdx] = useState(0);
+  const [gfxZoom, setGfxZoom] = useState(false);
   const [gfxSearch, setGfxSearch] = useState('');
   const [gfxRequestOpen, setGfxRequestOpen] = useState(false);
+  const [gfxBrowseView, setGfxBrowseView] = useState<'all' | 'byCategory'>('all');
+  useEffect(() => {
+    setGfxBrowseView(data.gfxGridSettings?.galleryBrowseMode ?? 'all');
+  }, [data.gfxGridSettings?.galleryBrowseMode]);
 
   // Agri article full-page view (replaces modal)
   const [articlePage, setArticlePage] = useState<AgriArticle | null>(null);
@@ -599,11 +516,22 @@ export default function App() {
   const [playgroundMode, setPlaygroundMode] = useState(false);
   const [snippetJs, setSnippetJs] = useState('');
   const [snippetLangTab, setSnippetLangTab] = useState<'html' | 'css' | 'js'>('html');
+  const [labPdfBusy, setLabPdfBusy] = useState(false);
+  const [labCodePanelOpen, setLabCodePanelOpen] = useState(false);
+  const [labPreviewDevice, setLabPreviewDevice] = useState<'auto' | 'desktop' | 'mobile'>('auto');
+  const [labPreviewZoom, setLabPreviewZoom] = useState(1);
+  const labLangDdRef = useRef<HTMLDivElement>(null);
+  const [visitorLabProjects, setVisitorLabProjects] = useState<VisitorLabProject[]>(() => loadVisitorLabProjects());
+  const [labEditorMode, setLabEditorMode] = useState<'published' | 'visitor'>('published');
+  const [visitorLabDraft, setVisitorLabDraft] = useState<VisitorLabProject | null>(null);
+  const [visitorSubmitting, setVisitorSubmitting] = useState(false);
+  const [visitorSubmitMsg, setVisitorSubmitMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   // Software portal sub-tabs & web project page
-  const [softSubTab, setSoftSubTab] = useState<'projects' | 'labs'>('projects');
+  const [softSubTab, setSoftSubTab] = useState<'projects' | 'labs'>(initialNav?.softSubTab ?? 'projects');
   const [webProjectPage, setWebProjectPage] = useState<WebProject | null>(null);
   const [webProjCarouselIdx, setWebProjCarouselIdx] = useState(0);
+  const [webProjSoonOpen, setWebProjSoonOpen] = useState(false);
 
   // Request form state (software section)
   const [reqName, setReqName] = useState('');
@@ -613,6 +541,9 @@ export default function App() {
   // Server sync state
   const [serverConnected, setServerConnected] = useState(() => !!getApiToken());
   const [serverSyncing, setServerSyncing] = useState(false);
+  const [gpsConsentOpen, setGpsConsentOpen] = useState(false);
+  const [gpsConsentBusy, setGpsConsentBusy] = useState(false);
+  const [gpsConsentError, setGpsConsentError] = useState('');
 
   // Admin form state
   const [adminEmail, setAdminEmail] = useState("");
@@ -638,7 +569,6 @@ export default function App() {
   const [newPageCss, setNewPageCss] = useState("");
 
   const canvasRef = useRef<HTMLDivElement>(null);
-  const aboutPhotoRef = useRef<HTMLDivElement>(null);
   const cvPrintMountRef = useRef<HTMLDivElement>(null);
   const cvPortalPreviewRef = useRef<HTMLDivElement>(null);
   const aboutCvSnapRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -646,6 +576,24 @@ export default function App() {
   const previewFrame = useRef<HTMLIFrameElement>(null);
 
   const t: T = translations[lang];
+
+  // استعادة اتصال قاعدة البيانات وتجديده تلقائياً عند كل فتح للموقع.
+  useEffect(() => {
+    let active = true;
+    setServerSyncing(true);
+    const renew = (showProgress = false) => void restoreApiSession().then(ok => {
+      if (active) {
+        setServerConnected(ok);
+        if (showProgress) setServerSyncing(false);
+      }
+    });
+    renew(true);
+    const renewalTimer = window.setInterval(() => renew(false), 6 * 60 * 60 * 1000);
+    return () => {
+      active = false;
+      window.clearInterval(renewalTimer);
+    };
+  }, []);
 
   // Site theme (dark default) — controlled from admin Site Settings
   const theme = data.siteSettings?.themeMode === "light" ? "light" : "dark";
@@ -661,18 +609,30 @@ export default function App() {
     };
   }, [theme]);
 
+  // Site-wide base font size (admin Site Settings)
+  useEffect(() => {
+    const px = data.siteSettings?.baseFontSize ?? 16;
+    document.documentElement.style.fontSize = `${px}px`;
+    return () => { document.documentElement.style.fontSize = ''; };
+  }, [data.siteSettings?.baseFontSize]);
+
   // Three.js — animated network renders on every page (dark=deep-navy palette, light=blue-on-white palette)
   useThreeBackground(canvasRef, theme);
-  usePhotoOrbit(aboutPhotoRef, portal === "about");
 
-  // Load: localStorage → DB (admin) → data.json (كتب/مقالات/تصاميم — أولوية للملف الثابت)
+  // Load: localStorage → DB (admin) → data.json (اختياري — فقط إن لم تُحمَّل قاعدة البيانات)
   useEffect(() => {
     (async () => {
       let merged = loadAppData();
       const dbData = await loadAppDataFromDb();
+      const dbLoaded = !!dbData;
       if (dbData) merged = { ...merged, ...dbData };
-      const jsonPatch = await loadSiteContentFromJson();
-      if (jsonPatch) merged = mergeSiteContent(merged, jsonPatch);
+      /* عند نجاح MySQL لا نطلب data.json — يمنع 404 في الكونسول */
+      if (!dbLoaded) {
+        const jsonPatch = await loadSiteContentFromJson();
+        if (jsonPatch) {
+          merged = mergeSiteContent(merged, jsonPatch);
+        }
+      }
       merged = { ...merged, skills: normalizeSkillIconList(merged.skills || []) };
       setData(applyDefaultCatalog(merged));
     })().catch(() => { /* stay with localStorage */ });
@@ -684,11 +644,39 @@ export default function App() {
     document.documentElement.dir = t.dir;
   }, [lang, t.dir]);
 
-  // Visitor analytics — لا يُتتبّع المدير أثناء جلسة الإدارة
+  const analyticsPath = navToPath({
+    portal,
+    agriTabKey: agriTabIndexToKey(agriTab, !!data.aiDiagnosticsEnabled),
+    softSubTab,
+    gfxProjectId: gfxProjectPage?.id ?? null,
+    articleId: articlePage?.id ?? null,
+    webProjectId: webProjectPage?.id ?? null,
+  });
+  const activeVisitRef = useRef<{ path: string; started: number; ended: boolean } | null>(null);
+
+  // الرابط الدقيق + مدة البقاء فيه — لا يُتتبّع المدير أثناء جلسة الإدارة
   useEffect(() => {
-    if (adminLoggedIn) return;
-    trackPageView(`${portal}:${lang}`);
-  }, [portal, lang, adminLoggedIn]);
+    if (adminLoggedIn || portal === 'admin') return;
+    const visit = { path: analyticsPath, started: Date.now(), ended: false };
+    activeVisitRef.current = visit;
+    void trackPageView(analyticsPath);
+    return () => {
+      if (visit.ended) return;
+      visit.ended = true;
+      void trackPageDuration(visit.path, (Date.now() - visit.started) / 1000);
+    };
+  }, [analyticsPath, adminLoggedIn, portal]);
+
+  useEffect(() => {
+    const finish = () => {
+      const visit = activeVisitRef.current;
+      if (!visit || visit.ended) return;
+      visit.ended = true;
+      void trackPageDuration(visit.path, (Date.now() - visit.started) / 1000);
+    };
+    window.addEventListener('pagehide', finish);
+    return () => window.removeEventListener('pagehide', finish);
+  }, []);
 
   useEffect(() => {
     if (adminLoggedIn) return;
@@ -700,6 +688,43 @@ export default function App() {
     return () => clearInterval(id);
   }, [adminLoggedIn]);
 
+  // طلب GPS الدقيق اختياري، ويظهر فقط داخل قسم الزراعة عندما يفعّله المدير.
+  useEffect(() => {
+    if (adminLoggedIn || portal !== 'agri' || !data.siteSettings?.visitorGpsPromptEnabled) {
+      setGpsConsentOpen(false);
+      return;
+    }
+    if (getStoredVisitorLocation() || getVisitorGpsDecision()) return;
+    const timer = window.setTimeout(() => setGpsConsentOpen(true), 600);
+    return () => window.clearTimeout(timer);
+  }, [adminLoggedIn, portal, data.siteSettings?.visitorGpsPromptEnabled]);
+
+  const acceptGpsConsent = useCallback(async () => {
+    setGpsConsentBusy(true);
+    setGpsConsentError('');
+    try {
+      await requestVisitorLocation();
+      setGpsConsentOpen(false);
+      void trackHeartbeat();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'unavailable';
+      if (msg === 'denied') {
+        saveVisitorGpsDecision('declined');
+        setGpsConsentError(lang === 'ar' ? 'تم رفض إذن الموقع من المتصفح.' : 'Location permission was denied.');
+      } else {
+        setGpsConsentError(lang === 'ar' ? 'تعذّر تحديد الموقع الآن. يمكنك المحاولة لاحقاً.' : 'Location is unavailable. Try again later.');
+      }
+    } finally {
+      setGpsConsentBusy(false);
+    }
+  }, [lang]);
+
+  const declineGpsConsent = useCallback(() => {
+    saveVisitorGpsDecision('declined');
+    setGpsConsentOpen(false);
+    setGpsConsentError('');
+  }, []);
+
   // Tabs: [diag?] + season + books + articles + soilreq
   useEffect(() => {
     const count = (data.aiDiagnosticsEnabled ? 1 : 0) + 4;
@@ -709,9 +734,29 @@ export default function App() {
   // Update preview iframe when snippet HTML/CSS/JS changes
   useEffect(() => {
     const iframe = previewFrame.current;
-    if (!iframe || selectedSnippetIdx === null) return;
-    iframe.srcdoc = buildPreviewSrc(snippetHtml, snippetCss, snippetJs);
-  }, [snippetHtml, snippetCss, snippetJs, selectedSnippetIdx]);
+    if (!iframe || (selectedSnippetIdx === null && !visitorLabDraft)) return;
+    iframe.srcdoc = buildLabPreviewSrcdoc(snippetHtml, snippetCss, snippetJs);
+  }, [snippetHtml, snippetCss, snippetJs, selectedSnippetIdx, visitorLabDraft]);
+
+  // مزامنة حالة مشاريع الزائر عند فتح مختبرات الأكواد
+  useEffect(() => {
+    if (portal !== 'software' || softSubTab !== 'labs') return;
+    const ids = data.softwareSnippets.map((s) => s.id).filter(Boolean) as string[];
+    void syncVisitorLabProjects(ids).then(setVisitorLabProjects);
+  }, [portal, softSubTab, data.softwareSnippets]);
+
+  // وساطة تنزيل من داخل iframe المعاينة (عند فشل التنزيل المحلي)
+  useEffect(() => {
+    const onMsg = (ev: MessageEvent) => {
+      const d = ev.data;
+      if (!d || d.type !== 'lab-download-blob') return;
+      try {
+        downloadViaBlob(d.data ?? '', String(d.filename || 'download'), String(d.mime || 'application/octet-stream'));
+      } catch { /* ignore */ }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
 
   // Animate skill bars when graphics portal opens
   useEffect(() => {
@@ -735,7 +780,7 @@ export default function App() {
     if (!langOpen) return;
 
     const placeMenu = () => {
-      const anchor = langDdRef.current;
+      const anchor = (playgroundMode ? labLangDdRef.current : null) || langDdRef.current;
       if (!anchor) return;
       const rect = anchor.getBoundingClientRect();
       const top = rect.bottom + 10;
@@ -754,7 +799,7 @@ export default function App() {
       window.removeEventListener("resize", placeMenu);
       window.removeEventListener("scroll", placeMenu, true);
     };
-  }, [langOpen]);
+  }, [langOpen, playgroundMode]);
 
   const openPortal = useCallback((p: Portal) => {
     setPortal(p);
@@ -766,20 +811,166 @@ export default function App() {
     setActiveSkill(null);
   }, []);
 
+  /* ── Navigation persistence: refresh + browser back ── */
+  const navPoppingRef = useRef(false);
+  const navReadyRef = useRef(false);
+  const navRef = useRef<NavSnapshot>({});
+  const gfxGalleryScrollRef = useRef(0);
+  const articleScrollRef = useRef(0);
+
+  const resolveGfxById = useCallback(
+    (id: string | null | undefined): GfxProjectItem | null => {
+      if (!id) return null;
+      for (const c of data.gfxCategories || [])
+        for (const s of c.subCategories || []) {
+          const it = s.items.find((i) => i.id === id);
+          if (it) return it;
+        }
+      return null;
+    },
+    [data.gfxCategories],
+  );
+
+  // Restore open detail pages + scroll on first mount (after data is ready)
+  useEffect(() => {
+    const nav = initialNav;
+    if (!nav) return;
+    if (nav.agriTabKey) {
+      setAgriTab(agriTabKeyToIndex(nav.agriTabKey, !!data.aiDiagnosticsEnabled));
+    }
+    const gfx = resolveGfxById(nav.gfxProjectId);
+    const art = nav.articleId
+      ? (data.agriArticles || []).find((x) => x.id === nav.articleId)
+      : null;
+    const web = nav.webProjectId
+      ? (data.webProjects || []).find((x) => x.id === nav.webProjectId)
+      : null;
+    if (gfx || art || web) {
+      // Restore does not add a new history entry
+      navPoppingRef.current = true;
+      if (gfx) setGfxProjectPage(gfx);
+      if (art) setArticlePage(art);
+      if (web) setWebProjectPage(web);
+    }
+    if (typeof nav.scrollY === "number" && nav.scrollY > 0) {
+      const y = nav.scrollY;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => window.scrollTo(0, y)),
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist the current view to history + sessionStorage whenever it changes
+  useEffect(() => {
+    const snap: NavSnapshot = {
+      portal,
+      agriTab,
+      agriTabKey: agriTabIndexToKey(agriTab, !!data.aiDiagnosticsEnabled),
+      gfxTab,
+      softSubTab,
+      gfxSelCatId,
+      gfxSelSubId,
+      activeCat,
+      gfxProjectId: gfxProjectPage?.id ?? null,
+      articleId: articlePage?.id ?? null,
+      webProjectId: webProjectPage?.id ?? null,
+      scrollY: window.scrollY,
+    };
+    navRef.current = snap;
+    if (navPoppingRef.current) {
+      navPoppingRef.current = false;
+      return;
+    }
+    writeNavToBrowser(snap, navReadyRef.current);
+    navReadyRef.current = true;
+  }, [
+    portal,
+    agriTab,
+    gfxTab,
+    softSubTab,
+    gfxSelCatId,
+    gfxSelSubId,
+    activeCat,
+    gfxProjectPage,
+    articlePage,
+    webProjectPage,
+    data.aiDiagnosticsEnabled,
+  ]);
+
+  // Keep scroll position fresh in the stored snapshot (for refresh restore)
+  useEffect(() => {
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        writeNavToBrowser({ ...navRef.current, scrollY: window.scrollY }, false);
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  // Browser Back/Forward: apply the stored view instead of leaving the app
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const fromPath = pathToNav(window.location.pathname);
+      const fromState: NavSnapshot | undefined = (e.state as { __nav?: NavSnapshot } | null)?.__nav;
+      const nav: NavSnapshot = { ...fromState, ...fromPath };
+      if (!nav.portal && !fromState && !fromPath) return;
+      navPoppingRef.current = true;
+      setPortal(nav.portal ?? "home");
+      if (nav.agriTabKey) {
+        setAgriTab(agriTabKeyToIndex(nav.agriTabKey, !!data.aiDiagnosticsEnabled));
+      } else {
+        setAgriTab(nav.agriTab ?? 0);
+      }
+      setGfxTab(nav.gfxTab ?? 0);
+      setSoftSubTab(nav.softSubTab ?? "projects");
+      setGfxSelCatId(nav.gfxSelCatId ?? "");
+      setGfxSelSubId(nav.gfxSelSubId ?? "");
+      setActiveCat(nav.activeCat ?? null);
+      setGfxProjectPage(resolveGfxById(nav.gfxProjectId));
+      setArticlePage(
+        nav.articleId
+          ? (data.agriArticles || []).find((x) => x.id === nav.articleId) ?? null
+          : null,
+      );
+      setWebProjectPage(
+        nav.webProjectId
+          ? (data.webProjects || []).find((x) => x.id === nav.webProjectId) ?? null
+          : null,
+      );
+      const y = nav.scrollY ?? 0;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          window.scrollTo(0, y);
+          navPoppingRef.current = false;
+        }),
+      );
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [data.gfxCategories, data.agriArticles, data.webProjects, data.aiDiagnosticsEnabled, resolveGfxById]);
+
+  const copyShareLink = useCallback(async () => {
+    const url = buildShareUrl(navRef.current);
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      window.prompt(lang === 'ar' ? 'انسخ الرابط:' : 'Copy link:', url);
+    }
+  }, [lang]);
+
   const filteredGfx = activeSkill
     ? data.gfxGallery.filter((g) => g.apps.includes(activeSkill))
     : data.gfxGallery;
 
   /* ── Lab helpers ─────────────────────────────────── */
-  function buildPreviewSrc(html: string, css: string, js: string = '') {
-    return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap" rel="stylesheet">
-<style>*,*::before,*::after{box-sizing:border-box;}body{font-family:'Tajawal',sans-serif;padding:14px;padding-bottom:36px;margin:0;}
-${css}
-.___wm{position:fixed;bottom:0;left:0;right:0;background:rgba(0,51,102,0.07);text-align:center;padding:4px 0;font-size:10px;color:#003366;font-weight:700;letter-spacing:0.5px;font-family:'Courier New',monospace;border-top:1px solid rgba(0,51,102,0.1);z-index:9999;}
-</style></head><body>${html}<div class="___wm">eng-alaa.com</div>${js ? `<script>${js}</script>` : ''}</body></html>`;
-  }
-
   function buildThumbSrc(html: string, css: string) {
     return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8">
 <style>
@@ -793,12 +984,82 @@ ${css}
   function openSnippetEditor(idx: number) {
     const s = data.softwareSnippets[idx];
     if (!s) return;
+    setLabEditorMode('published');
+    setVisitorLabDraft(null);
+    setVisitorSubmitMsg(null);
     setSelectedSnippetIdx(idx);
     setSnippetHtml(s.codeHtml);
     setSnippetCss(s.codeCss);
     setSnippetJs(s.codeJs || '');
     setSnippetLangTab('html');
+    setLabCodePanelOpen(false);
+    setLabPreviewDevice('auto');
+    setLabPreviewZoom(1);
     setPlaygroundMode(true);
+  }
+
+  function openVisitorLabEditor(project?: VisitorLabProject) {
+    const draft: VisitorLabProject = project ?? {
+      localId: newLabLocalId(),
+      title: '',
+      desc: '',
+      codeHtml: '<div class="app">\n  <h2>مشروعي</h2>\n  <p>ابدأ التعديل هنا…</p>\n</div>',
+      codeCss: '.app { padding: 16px; font-family: Tajawal, sans-serif; }',
+      codeJs: '',
+      category: '',
+      status: 'pending',
+      submittedAt: new Date().toISOString(),
+    };
+    setLabEditorMode('visitor');
+    setVisitorLabDraft(draft);
+    setVisitorSubmitMsg(null);
+    setSelectedSnippetIdx(null);
+    setSnippetHtml(draft.codeHtml);
+    setSnippetCss(draft.codeCss);
+    setSnippetJs(draft.codeJs);
+    setSnippetLangTab('html');
+    setLabCodePanelOpen(false);
+    setLabPreviewDevice('auto');
+    setLabPreviewZoom(1);
+    setPlaygroundMode(true);
+  }
+
+  async function handleVisitorLabSubmit() {
+    if (!visitorLabDraft) return;
+    const title = visitorLabDraft.title.trim() || (lang === 'ar' ? 'مشروع زائر' : 'Visitor project');
+    if (!snippetHtml.trim() && !title) return;
+    const project: VisitorLabProject = {
+      ...visitorLabDraft,
+      title,
+      desc: visitorLabDraft.desc.trim(),
+      category: visitorLabDraft.category.trim(),
+      codeHtml: snippetHtml,
+      codeCss: snippetCss,
+      codeJs: snippetJs,
+      status: 'pending',
+      submittedAt: visitorLabDraft.submittedAt || new Date().toISOString(),
+    };
+    setVisitorSubmitting(true);
+    const res = await submitVisitorLabProject(project);
+    const saved: VisitorLabProject = {
+      ...project,
+      serverId: res.serverId || project.serverId || project.localId,
+    };
+    setVisitorLabProjects(upsertVisitorLabProject(saved));
+    setVisitorLabDraft(saved);
+    setVisitorSubmitting(false);
+    setVisitorSubmitMsg({ type: res.ok ? 'ok' : 'err', text: res.ok ? t.labSubmitSuccess : t.labSubmitError });
+  }
+
+  function closeLabPlayground() {
+    setPlaygroundMode(false);
+    setSelectedSnippetIdx(null);
+    setVisitorLabDraft(null);
+    setLabEditorMode('published');
+    setVisitorSubmitMsg(null);
+    setLabCodePanelOpen(false);
+    setLabPreviewDevice('auto');
+    setLabPreviewZoom(1);
   }
 
   function sendSoftwareRequest(via: 'whatsapp' | 'email') {
@@ -813,13 +1074,40 @@ ${css}
 
   const labCategories = Array.from(
     new Set(
-      data.softwareSnippets.map((s) => s.category).filter(Boolean) as string[],
+      [
+        ...data.softwareSnippets.map((s) => s.category).filter(Boolean),
+        ...visitorLabProjects.map((p) => p.category).filter(Boolean),
+      ] as string[],
     ),
   );
 
   const filteredSnippets = activeCat
     ? data.softwareSnippets.filter((s) => s.category === activeCat)
     : data.softwareSnippets;
+
+  const filteredVisitorProjects = activeCat
+    ? visitorLabProjects.filter((p) => p.category === activeCat)
+    : visitorLabProjects;
+
+  const labGridItems: LabGridItem[] = [
+    ...filteredVisitorProjects.map((project) => ({ kind: 'visitor' as const, project })),
+    ...filteredSnippets.map((snippet) => ({
+      kind: 'published' as const,
+      snippet,
+      index: data.softwareSnippets.indexOf(snippet),
+    })),
+  ];
+
+  const labEffectiveDevice = useMemo(() => {
+    if (labPreviewDevice !== 'auto') return labPreviewDevice;
+    return detectLabPreviewDevice(snippetHtml, snippetCss);
+  }, [labPreviewDevice, snippetHtml, snippetCss]);
+
+  const activeLabTitle = useMemo(() => {
+    if (labEditorMode === 'visitor') return visitorLabDraft?.title || 'lab-project';
+    const s = selectedSnippetIdx !== null ? data.softwareSnippets[selectedSnippetIdx] : null;
+    return s ? (pickML(s.title, lang as LangKey) || 'lab-project') : 'lab-project';
+  }, [labEditorMode, visitorLabDraft, selectedSnippetIdx, data.softwareSnippets, lang]);
 
   // Admin login
   function handleAdminLogin() {
@@ -866,17 +1154,8 @@ ${css}
     }
   }
 
-  async function handleServerSync() {
-    setServerSyncing(true);
-    try {
-      await saveAppData(data);
-    } finally {
-      setServerSyncing(false);
-    }
-  }
-
   function handleServerDisconnect() {
-    clearApiToken();
+    void logoutFromApi();
     setServerConnected(false);
   }
 
@@ -1032,7 +1311,13 @@ ${css}
   }
 
   function handleSkillChange(id: string, patch: Partial<Skill>) {
-    setEditSkills(prev => prev.map(s => s.id === id ? { ...s, ...patch } : s));
+    const next = editSkills.map(s => s.id === id ? { ...s, ...patch } : s);
+    // إظهار/إخفاء السيرة يُحفظ فوراً؛ باقي التعديلات عبر زر الحفظ
+    if ('showOnAbout' in patch) {
+      saveSkillsImmediate(next);
+      return;
+    }
+    setEditSkills(next);
   }
 
   function handleSkillMoveUp(index: number) {
@@ -1046,10 +1331,51 @@ ${css}
   }
 
   function handleCvSave(partial: Partial<AppData>): Promise<boolean> {
-    const updated = { ...data, ...partial };
-    setData(updated);
-    return saveAppData(updated);
+    return new Promise(resolve => {
+      setData(prev => {
+        const updated = { ...prev, ...partial };
+        dataRef.current = updated;
+        void saveAppData(updated).then(resolve);
+        return updated;
+      });
+    });
   }
+
+  /** إعدادات الموقع — تحديث فوري للواجهة ثم حفظ/رفع مؤجّل */
+  const handleSiteApply = useCallback((partial: Partial<AppData>) => {
+    setData(prev => {
+      const updated = { ...prev, ...partial };
+      dataRef.current = updated;
+      return updated;
+    });
+  }, []);
+
+  const handleSitePersist = useCallback(() => saveAppData(dataRef.current), []);
+
+  // تحديث ألوان/ثيم الموقع للزوار من قاعدة البيانات (بدون إعادة تحميل الصفحة)
+  useEffect(() => {
+    if (adminLoggedIn) return;
+    let cancelled = false;
+    const pullTheme = async () => {
+      const remote = await fetchSiteSettingsFromDb();
+      if (cancelled || !remote) return;
+      setData(prev => {
+        if (JSON.stringify(prev.siteSettings) === JSON.stringify(remote)) return prev;
+        return { ...prev, siteSettings: remote };
+      });
+    };
+    void pullTheme();
+    const intervalId = setInterval(() => { void pullTheme(); }, 12000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void pullTheme();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [adminLoggedIn]);
 
   function saveArticleInline(updated: AgriArticle) {
     const newArticles = (data.agriArticles || []).map(a => a.id === updated.id ? updated : a);
@@ -1107,14 +1433,51 @@ ${css}
     };
     const op = typeof data.siteSettings?.glassOpacity === "number" ? data.siteSettings.glassOpacity : 0.5;
     const dark = theme === "dark";
-    const [h, s] = parseHsl(data.siteSettings?.accentColor || "#003366");
-    // Accent: as-picked in light mode; lifted to a readable, still-saturated
-    // brightness in dark mode (~62% L, matching the original #5b9bff feel).
+    const accentRaw = data.siteSettings?.accentColor || "#003366";
+    const [h, s] = parseHsl(accentRaw);
+    // Accent for public site: as-picked in light mode; lifted for readability in dark.
     const navyL = dark ? 62 : 28;
     const navy = `hsl(${h}, ${Math.max(s, 45)}%, ${navyL}%)`;
     const hsla = (l: number, a: number) => `hsla(${h}, ${Math.max(s, 35)}%, ${l}%, ${a})`;
+    // Admin panels sit on light cards — always keep a dark ink so labels stay readable.
+    const adminInk = `hsl(${h}, ${Math.max(s, 55)}%, 22%)`;
+    const navbarBgHex = dark ? '#001020' : '#eef4ff';
+    const pageBgHex = dark ? '#080808' : '#f5f8ff';
+    const menuDefault = dark ? '#e8f0ff' : accentRaw;
+    const menuTxt = pickReadableText(
+      (data.siteSettings?.menuTextColor || '').trim() || menuDefault,
+      navbarBgHex,
+    );
+    const fontFamily = (data.siteSettings?.siteFontFamily || "Tajawal").trim() || "Tajawal";
+    const bodyText = pickReadableText(
+      resolveBodyTextColor(data.siteSettings?.bodyTextColor, dark),
+      pageBgHex,
+    );
+    const mutedText = pickReadableText(
+      resolveMutedTextColor(data.siteSettings?.mutedTextColor, dark),
+      pageBgHex,
+    );
+    const headingText = pickReadableText(
+      resolveHeadingTextColor(data.siteSettings?.headingTextColor, accentRaw),
+      pageBgHex,
+    );
+    const btnBgHex = (data.siteSettings?.buttonBgColor || '').trim() || accentRaw;
+    const btnBg = (data.siteSettings?.buttonBgColor || "").trim() || navy;
+    const btnText = pickReadableText(
+      (data.siteSettings?.buttonTextColor || '').trim() || '#ffffff',
+      btnBgHex,
+    );
     return {
       "--navy": navy,
+      "--navy-raw": accentRaw,
+      "--admin-ink": adminInk,
+      "--menu-text": menuTxt,
+      "--btn-bg": btnBg,
+      "--btn-text": btnText,
+      "--font": `'${fontFamily}', system-ui, sans-serif`,
+      "--text": bodyText,
+      "--muted": mutedText,
+      "--heading-text": headingText,
       "--navy-light": hsla(navyL, 0.12),
       "--navy-glow": hsla(navyL, 0.32),
       // Glass + field tinted by the accent hue, scaled by the opacity slider.
@@ -1277,6 +1640,7 @@ ${css}
                 icon: "fa-seedling",
                 gradient: "--g-agri",
                 title: t.gate1Title,
+                short: lang === "ar" ? "الزراعة" : lang === "de" ? "Agrar" : "Agri",
                 desc: t.gate1Desc,
                 num: "01",
               },
@@ -1285,6 +1649,7 @@ ${css}
                 icon: "fa-bezier-curve",
                 gradient: "--g-gfx",
                 title: t.gate2Title,
+                short: lang === "ar" ? "التصاميم" : lang === "de" ? "Design" : "Design",
                 desc: t.gate2Desc,
                 num: "02",
               },
@@ -1293,6 +1658,7 @@ ${css}
                 icon: "fa-code",
                 gradient: "--g-software",
                 title: t.gate3Title,
+                short: lang === "ar" ? "البرمجة" : lang === "de" ? "Code" : "Code",
                 desc: t.gate3Desc,
                 num: "03",
               },
@@ -1307,7 +1673,10 @@ ${css}
                 <div className="portal-card-icon-wrap">
                   <i className={`fa-solid ${g.icon}`} />
                 </div>
-                <h3>{g.title}</h3>
+                <h3>
+                  <span className="portal-card-title-full">{g.title}</span>
+                  <span className="portal-card-title-short">{g.short}</span>
+                </h3>
                 <p>{g.desc}</p>
                 <div className="portal-card-arrow">
                   <i
@@ -1317,6 +1686,10 @@ ${css}
               </div>
             ))}
           </div>
+
+          {(data.siteSettings?.homeIntroVideo || '').trim() && (
+            <HomeIntroVideo url={(data.siteSettings?.homeIntroVideo || '').trim()} />
+          )}
 
           {/* Scroll indicator */}
           <div className="hero-scroll-hint">
@@ -1340,17 +1713,39 @@ ${css}
           </div>
 
           {/* ── Full-page layout ── */}
-          <div className="about-dark-layout">
+          <div
+            className="about-dark-layout"
+            style={(() => {
+              const badgeOn = data.siteSettings?.aboutNameBadgeVisible !== false;
+              const bottomDesk = data.siteSettings?.aboutNameBadgeBottomDesktop ?? 22;
+              const bottomMob = data.siteSettings?.aboutNameBadgeBottomMobile ?? 8;
+              const clearMob = badgeOn && bottomMob < 0 ? Math.abs(bottomMob) + 18 : 0;
+              const clearDesk = badgeOn && bottomDesk < 0 ? Math.abs(bottomDesk) + 18 : 0;
+              return {
+                ['--about-badge-bottom' as string]: `${bottomDesk}px`,
+                ['--about-badge-bottom-mobile' as string]: `${bottomMob}px`,
+                ['--about-badge-pad-y' as string]: `${data.siteSettings?.aboutNameBadgePadY ?? 6}px`,
+                ['--about-badge-clear-mobile' as string]: `${clearMob}px`,
+                ['--about-badge-clear-desktop' as string]: `${clearDesk}px`,
+              };
+            })()}
+          >
             {/* Photo — absolute right, full height, bleeds into bg */}
-            <div className="about-dark-photo-side" ref={aboutPhotoRef}>
-              <img
-                src="/alaa-photo.jpg"
+            <div className="about-dark-photo-side">
+              <div className="about-photo-orbit" aria-hidden="true">
+                <span className="about-photo-orbit-ring about-photo-orbit-ring--1" />
+                <span className="about-photo-orbit-ring about-photo-orbit-ring--2" />
+                <span className="about-photo-orbit-ring about-photo-orbit-ring--3" />
+              </div>
+              <AboutDarkHeroMedia
+                media={data.siteSettings?.aboutHeroMedia}
+                kind={data.siteSettings?.aboutHeroKind || 'auto'}
                 alt={pickML(data.name, cvLang)}
-                className="about-dark-photo-img"
               />
               {/* Gradient fade on the left edge — merges photo into dark bg */}
               <div className="about-dark-photo-fade" />
               {/* Name badge floating at bottom of photo */}
+              {(data.siteSettings?.aboutNameBadgeVisible !== false) && (
               <div className="about-dark-name-badge">
                 <HeroNameDisplay
                   name={pickML(data.name, cvLang)}
@@ -1369,6 +1764,7 @@ ${css}
                 />
                 <span className="about-dark-role">{t.aboutSubtitle}</span>
               </div>
+              )}
             </div>
 
             {/* Text content — sits BEHIND the photo (lower z-index) */}
@@ -1396,13 +1792,13 @@ ${css}
                 </div>
               )}
 
-              {/* Skills */}
+              {/* Skills — نفس أيقونات لوحة التحكم */}
               <h4 className="about-dark-skills-title">{t.aboutSkillsTitle}</h4>
               <div className="about-dark-skills-list">
-                {data.skills.map((skill) => (
+                {data.skills.filter((skill) => skill.showOnAbout !== false).map((skill) => (
                   <div key={skill.id} className="about-dark-skill-row">
                     <div className="about-dark-skill-info">
-                      <SkillIcon icon={skill.icon} name={skill.name} size={18} />
+                      <SkillIcon icon={skill.icon} name={skill.name} size={22} />
                       <span>{skill.name}</span>
                       <span className="about-dark-skill-pct">
                         {skill.percent}%
@@ -1471,7 +1867,7 @@ ${css}
                       {book.previewUrl && (
                         <button type="button" onClick={() => setBookPreview(book)}
                           className="book-btn-preview"
-                          style={{ background: 'var(--navy)', color: '#fff', border: 'none' }}>
+                          style={{ background: 'var(--btn-bg, var(--navy))', color: 'var(--btn-text, #fff)', border: 'none' }}>
                           <i className="fa-solid fa-eye" /> {t.previewBook}
                         </button>
                       )}
@@ -1495,7 +1891,7 @@ ${css}
                         <a href={book.driveUrl} target="_blank" rel="noreferrer"
                           className="book-btn-download"
                           onClick={() => trackFileDownload(pickML(book.title, lang as LangKey) || 'book', book.id)}
-                          style={{ background: 'var(--navy)', color: '#fff' }}>
+                          style={{ background: 'var(--btn-bg, var(--navy))', color: 'var(--btn-text, #fff)' }}>
                           <i className="fa-solid fa-download" /> {t.downloadBook}
                         </a>
                       )}
@@ -1541,7 +1937,7 @@ ${css}
           const name = pickML(node.name, lang as LangKey) || '—';
           const childrenSideBySide = depth === 1 && node.children.length > 0;
           const headerStyle: React.CSSProperties =
-            depth === 0 ? { background: 'var(--navy)', color: '#fff', borderRadius: 10, padding: '12px 16px', fontWeight: 800, fontSize: 16, display: 'flex', alignItems: 'center', gap: 10 }
+            depth === 0 ? { background: 'var(--btn-bg, var(--navy))', color: 'var(--btn-text, #fff)', borderRadius: 10, padding: '12px 16px', fontWeight: 800, fontSize: 16, display: 'flex', alignItems: 'center', gap: 10 }
             : depth === 1 ? { color: theme === 'dark' ? '#dfe9f8' : '#003366', fontWeight: 800, fontSize: 17, padding: '4px 0 10px', borderBottom: `2px solid var(--navy)`, display: 'flex', alignItems: 'center', gap: 9 }
             : depth === 2 ? { background: theme === 'dark' ? 'rgba(255,255,255,0.06)' : '#eef4fb', color: theme === 'dark' ? '#dfe9f8' : '#003366', borderRadius: 8, padding: '8px 12px', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }
             : { color: theme === 'dark' ? '#bcd0ea' : '#2a4a6b', fontWeight: 700, fontSize: 13, padding: '2px 0', display: 'flex', alignItems: 'center', gap: 7 };
@@ -1649,8 +2045,8 @@ ${css}
               <div style={{ maxWidth: 820, margin: '0 auto' }}>
                 {/* Top navigation buttons */}
                 <div style={{ display: 'flex', gap: 10, marginBottom: 22, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <button onClick={() => { setArticlePage(null); setArticleEditMode(false); setArticleEditData(null); }}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'var(--navy)', color: '#fff', border: 'none', borderRadius: 10, padding: '8px 16px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700, fontSize: 13 }}>
+                  <button onClick={() => { setArticlePage(null); setArticleEditMode(false); setArticleEditData(null); const y = articleScrollRef.current; requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y))); }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'var(--btn-bg, var(--navy))', color: 'var(--btn-text, #fff)', border: 'none', borderRadius: 10, padding: '8px 16px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700, fontSize: 13 }}>
                     <i className={`fa-solid ${isRtl ? 'fa-arrow-right' : 'fa-arrow-left'}`} />
                     {lang === 'ar' ? 'العودة للمقالات' : lang === 'de' ? 'Zurück zu Artikeln' : 'Back to Articles'}
                   </button>
@@ -1769,6 +2165,11 @@ ${css}
                           <i className="fa-solid fa-envelope" style={{ fontSize: 15 }} />
                           {lang === 'ar' ? 'بريد إلكتروني' : lang === 'de' ? 'E-Mail' : 'Email'}
                         </a>
+                        <button type="button" onClick={() => void copyShareLink()}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: theme === 'dark' ? 'rgba(0,170,255,0.15)' : '#e8f4ff', color: theme === 'dark' ? '#9ed8ff' : '#003366', border: `1px solid ${theme === 'dark' ? 'rgba(0,170,255,0.35)' : '#b8d9f5'}`, borderRadius: 10, padding: '9px 18px', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+                          <i className="fa-solid fa-link" style={{ fontSize: 15 }} />
+                          {lang === 'ar' ? 'نسخ الرابط' : lang === 'de' ? 'Link kopieren' : 'Copy link'}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1821,7 +2222,7 @@ ${css}
                           </h3>
                           <div className="articles-dynamic-grid" style={articleGridCss}>
                             {g.items.map(article => (
-                              <div key={article.id} className="card glass" style={{ cursor: 'pointer' }} onClick={() => { setArticlePage(article); setArticleImgIdx(0); setArticleEditMode(false); }}>
+                              <div key={article.id} className="card glass" style={{ cursor: 'pointer' }} onClick={() => { articleScrollRef.current = window.scrollY; setArticlePage(article); setArticleImgIdx(0); setArticleEditMode(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
                                 {article.images[0] && (
                                   <div style={{ overflow: 'hidden', position: 'relative' }}>
                                     <img src={resolveImageSrc(article.images[0])} alt={pickML(article.title, lang as LangKey)} className="article-card-img" />
@@ -1895,11 +2296,11 @@ ${css}
                     <div style={{ display: 'flex', justifyContent: isRtl ? 'flex-start' : 'flex-end', gap: 6 }}>
                       <div style={{ display: 'inline-flex', border: `1px solid ${borderCol}`, borderRadius: 10, overflow: 'hidden' }}>
                         <button onClick={() => setLibView('tree')} title={lang === 'ar' ? 'عرض شجري' : lang === 'de' ? 'Baumansicht' : 'Tree view'}
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', cursor: 'pointer', padding: '7px 14px', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, background: libView === 'tree' ? 'var(--navy)' : 'transparent', color: libView === 'tree' ? '#fff' : (theme === 'dark' ? '#cdd9ec' : '#003366') }}>
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', cursor: 'pointer', padding: '7px 14px', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, background: libView === 'tree' ? 'var(--btn-bg, var(--navy))' : 'transparent', color: libView === 'tree' ? 'var(--btn-text, #fff)' : (theme === 'dark' ? '#cdd9ec' : '#003366') }}>
                           <i className="fa-solid fa-folder-tree" /> {lang === 'ar' ? 'شجري' : lang === 'de' ? 'Baum' : 'Tree'}
                         </button>
                         <button onClick={() => setLibView('expanded')} title={lang === 'ar' ? 'عرض كامل' : lang === 'de' ? 'Vollansicht' : 'Full view'}
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', cursor: 'pointer', padding: '7px 14px', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, background: libView === 'expanded' ? 'var(--navy)' : 'transparent', color: libView === 'expanded' ? '#fff' : (theme === 'dark' ? '#cdd9ec' : '#003366') }}>
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', cursor: 'pointer', padding: '7px 14px', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, background: libView === 'expanded' ? 'var(--btn-bg, var(--navy))' : 'transparent', color: libView === 'expanded' ? 'var(--btn-text, #fff)' : (theme === 'dark' ? '#cdd9ec' : '#003366') }}>
                           <i className="fa-solid fa-table-cells-large" /> {lang === 'ar' ? 'كامل' : lang === 'de' ? 'Voll' : 'Full'}
                         </button>
                       </div>
@@ -1935,26 +2336,98 @@ ${css}
       {/* ── Graphics Portal (3-tier) ─────────────────── */}
       {portal === "graphics" && (() => {
         const gfxCats = data.gfxCategories || [];
+        const gfxGrid = { ...DEFAULT_GFX_GRID, ...(data.gfxGridSettings || {}) };
+        const browseMode = gfxBrowseView;
+        const gridStyle = gfxGridStyleResponsive(gfxGrid, isMobileView);
         const selCat = gfxCats.find(c => c.id === gfxSelCatId) || gfxCats[0];
         const selSub = selCat?.subCategories.find(s => s.id === gfxSelSubId);
+        const totalInCat = selCat
+          ? selCat.subCategories.reduce((n, s) => n + s.items.length, 0)
+          : 0;
         const allItems = selSub ? selSub.items : (selCat ? selCat.subCategories.flatMap(s => s.items) : []);
-        const searchedItems = gfxSearch.trim()
-          ? allItems.filter(it => (pickML(it.title, lang as LangKey) + ' ' + pickML(it.desc, lang as LangKey)).toLowerCase().includes(gfxSearch.toLowerCase()))
-          : allItems;
+        const itemMatchesSearch = (item: GfxProjectItem) => {
+          if (!gfxSearch.trim()) return true;
+          const q = gfxSearch.toLowerCase();
+          return (pickML(item.title, lang as LangKey) + ' ' + pickML(item.desc, lang as LangKey)).toLowerCase().includes(q);
+        };
+        const searchedItems = allItems.filter(itemMatchesSearch);
+        const showAllGrouped = browseMode === 'byCategory' && !gfxSelSubId && !gfxSearch.trim() && !!selCat;
+        const allLabel = lang === 'ar' ? 'الكل' : lang === 'de' ? 'Alle' : 'All';
+
+        const buildGfxNavList = (): GfxProjectItem[] => {
+          if (browseMode === 'all') {
+            return gfxCats.flatMap(cat =>
+              cat.subCategories.flatMap(sub => sub.items.filter(itemMatchesSearch)),
+            );
+          }
+          if (showAllGrouped && selCat) {
+            return selCat.subCategories.flatMap(sub => sub.items.filter(itemMatchesSearch));
+          }
+          return searchedItems;
+        };
+
+        const openGfxProject = (item: GfxProjectItem) => {
+          setGfxProjectPage(item);
+          setGfxCarouselIdx(0);
+          setGfxRequestOpen(false);
+          setGfxZoom(false);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        };
+
+        const renderSubDivider = (label: string, count: number) => (
+          <div className="gfx-sub-divider">
+            <div className="gfx-sub-divider-line" style={{ background: `linear-gradient(${isRtl ? '270deg' : '90deg'}, rgba(0,51,102,0.08), #003366)` }} />
+            <span className="gfx-sub-divider-label">{label} · {count}</span>
+            <div className="gfx-sub-divider-line" style={{ background: `linear-gradient(${isRtl ? '90deg' : '270deg'}, rgba(0,51,102,0.08), #003366)` }} />
+          </div>
+        );
+
+        const renderSubGrid = (items: GfxProjectItem[]) => (
+          items.length > 0 ? (
+            <div className="gfx-dyn-grid" style={gridStyle}>{items.map(renderCard)}</div>
+          ) : (
+            <p className="gfx-sub-empty">
+              {lang === 'ar' ? 'لا مشاريع في هذا الفرع بعد' : lang === 'de' ? 'Noch keine Projekte in dieser Kategorie' : 'No projects in this branch yet'}
+            </p>
+          )
+        );
+
+        const renderEmptyGallery = (searching: boolean) => (
+          <div style={{ textAlign: 'center', color: '#999', padding: '40px 0' }}>
+            <i className="fa-solid fa-images" style={{ fontSize: '2.5rem', color: theme === 'dark' ? '#5b9bff' : '#003366', marginBottom: 14, display: 'block' }} />
+            {searching
+              ? (lang === 'ar' ? 'لا توجد نتائج' : lang === 'de' ? 'Keine Ergebnisse' : 'No results found')
+              : (lang === 'ar' ? 'لا توجد مشاريع بعد' : lang === 'de' ? 'Noch keine Projekte' : 'No projects yet')}
+          </div>
+        );
 
         const renderCard = (item: GfxProjectItem) => (
           <div key={item.id} className="card glass" style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden' }}
-            onClick={() => { setGfxProjectPage(item); setGfxCarouselIdx(0); setGfxRequestOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+            onClick={() => { gfxGalleryScrollRef.current = window.scrollY; openGfxProject(item); }}>
             <div style={{ overflow: 'hidden', position: 'relative' }}>
-              <img src={resolveImageSrc(item.mainImg || '')} alt={pickML(item.title, lang as LangKey)} className="card-img"
-                style={{ transition: 'transform 0.35s ease' }}
-                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.06)')}
-                onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')} />
+              {gfxModelAsMain(item) ? (
+                <GfxModelViewer
+                  key={`${item.id}-${gfxViewSettingsKey(settingsForGalleryCardPreview(item.glbViewSettings, isMobileView))}`}
+                  url={gfxItemModelUrl(item)}
+                  settings={settingsForGalleryCardPreview(item.glbViewSettings, isMobileView)}
+                  height={220}
+                  className="card-img"
+                  style={{ minHeight: 180 }}
+                />
+              ) : (item.mainImgIsVideo || getGfxMediaSlides(item)[0]?.isVideo) ? (
+                <GfxMediaSlide url={item.mainImg || ''} isVideo objectFit="cover" className="card-img" style={{ transition: 'transform 0.35s ease' }} />
+              ) : (
+                <img src={resolveImageSrc(item.mainImg || '')} alt={pickML(item.title, lang as LangKey)} className="card-img"
+                  style={{ transition: 'transform 0.35s ease' }}
+                  onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.06)')}
+                  onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')} />
+              )}
               {data.watermarkImg && !item.mainImgNoWm && <img src={data.watermarkImg} alt="" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: data.watermarkOpacity ?? 0.15, pointerEvents: 'none' }} />}
               {item.cvSettings.isFeatured && <div style={{ position: 'absolute', top: 8, insetInlineStart: 8, background: '#003366', color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 6, padding: '2px 8px' }}>★ {lang === 'ar' ? 'مميز' : 'Featured'}</div>}
-              {(item.images.length > 0 || item.videoUrl) && (
+              {(item.images.length > 0 || item.videoUrl || gfx3dPreviewActive(item)) && (
                 <div style={{ position: 'absolute', bottom: 8, insetInlineEnd: 8, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)', color: '#fff', fontSize: 11, borderRadius: 8, padding: '3px 8px', display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <i className="fa-solid fa-images" />{item.images.length + 1}
+                  <i className="fa-solid fa-images" />{item.images.length + (item.mainImg ? 1 : 0)}
+                  {gfx3dPreviewActive(item) && <i className="fa-solid fa-cube" style={{ marginInlineStart: 4 }} />}
                   {item.videoUrl && <><i className="fa-solid fa-play" style={{ marginInlineStart: 4 }} /></>}
                 </div>
               )}
@@ -1968,11 +2441,22 @@ ${css}
 
         // ── Full-page project view ──────────────────────────
         if (gfxProjectPage) {
-          const imgs = [gfxProjectPage.mainImg, ...gfxProjectPage.images].filter(Boolean);
-          const totalSlides = imgs.length + (gfxProjectPage.videoUrl ? 1 : 0);
-          const isVideo = gfxProjectPage.videoUrl && gfxCarouselIdx >= imgs.length;
+          const projectSlides = getGfxProjectSlides(gfxProjectPage);
+          const totalSlides = projectSlides.length;
+          const current = projectSlides[gfxCarouselIdx];
+          const isYoutubeSlide = current?.kind === 'youtube';
+          const isModelSlide = current?.kind === 'model';
+          const isImageSlide = current?.kind === 'image';
           const projectTitle = pickML(gfxProjectPage.title, lang as LangKey) || '';
           const projectDesc = pickML(gfxProjectPage.desc, lang as LangKey) || '';
+          const gfxNavList = buildGfxNavList();
+          const projIdx = gfxNavList.findIndex(p => p.id === gfxProjectPage.id);
+          const hasPrevProj = projIdx > 0;
+          const hasNextProj = projIdx >= 0 && projIdx < gfxNavList.length - 1;
+          const goPrevProj = () => { if (hasPrevProj) openGfxProject(gfxNavList[projIdx - 1]); };
+          const goNextProj = () => { if (hasNextProj) openGfxProject(gfxNavList[projIdx + 1]); };
+          const prevImg = () => setGfxCarouselIdx(i => Math.max(0, i - 1));
+          const nextImg = () => setGfxCarouselIdx(i => Math.min(totalSlides - 1, i + 1));
           const phoneRaw = (data as any).personalInfo?.phone || '';
           const waPhone = phoneRaw.replace(/\D/g, '');
           const contactEmail = (data as any).personalInfo?.email || '';
@@ -1982,17 +2466,71 @@ ${css}
 
           return (
             <div className="content-wrap fade-up" style={{ direction: isRtl ? 'rtl' : 'ltr' }}>
-              {/* Navigation header */}
-              <div className="section-head" style={{ marginBottom: 20 }}>
-                <h2 className="section-title">{t.graphicsTitle}</h2>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button className="btn-back" onClick={() => { setGfxProjectPage(null); setGfxCarouselIdx(0); setGfxRequestOpen(false); }}>
-                    <i className={`fa-solid ${isRtl ? 'fa-arrow-right' : 'fa-arrow-left'}`} style={{ marginInlineEnd: 6 }} />{t.gfxBack}
+              {/* شريط تنقل مضغوط — زجاجي، سطر واحد (بدون عودة للرئيسية على الجوال) */}
+              <div className="gfx-proj-nav" style={{ marginBottom: 16 }}>
+                <button
+                  type="button"
+                  className="gfx-proj-nav__btn gfx-proj-nav__btn--gallery"
+                  onClick={() => {
+                    setGfxProjectPage(null);
+                    setGfxCarouselIdx(0);
+                    setGfxRequestOpen(false);
+                    setGfxZoom(false);
+                    const y = gfxGalleryScrollRef.current;
+                    requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)));
+                  }}
+                  title={t.gfxBack}
+                >
+                  <i className={`fa-solid ${isRtl ? 'fa-arrow-right' : 'fa-arrow-left'}`} />
+                  <span className="gfx-proj-nav__label">{t.gfxBack}</span>
+                </button>
+
+                {(hasPrevProj || hasNextProj || gfxNavList.length > 1) && (
+                <div className="gfx-proj-nav__stepper">
+                  <button
+                    type="button"
+                    className="gfx-proj-nav__btn gfx-proj-nav__btn--icon"
+                    disabled={!hasPrevProj}
+                    onClick={goPrevProj}
+                    title={lang === 'ar' ? 'التصميم السابق' : lang === 'de' ? 'Vorheriges Design' : 'Previous design'}
+                  >
+                    <i className={`fa-solid ${isRtl ? 'fa-chevron-right' : 'fa-chevron-left'}`} />
+                    <span className="gfx-proj-nav__label gfx-proj-nav__label--short">
+                      {lang === 'ar' ? 'السابق' : lang === 'de' ? 'Zurück' : 'Prev'}
+                    </span>
                   </button>
-                  <button className="btn-back" onClick={goHome}>
-                    <i className="fa-solid fa-house" style={{ marginInlineEnd: 6 }} />{t.backHome}
+
+                  {projIdx >= 0 && gfxNavList.length > 0 && (
+                    <span className="gfx-proj-nav__count">
+                      {projIdx + 1}
+                      <span className="gfx-proj-nav__count-sep">/</span>
+                      {gfxNavList.length}
+                    </span>
+                  )}
+
+                  <button
+                    type="button"
+                    className="gfx-proj-nav__btn gfx-proj-nav__btn--icon"
+                    disabled={!hasNextProj}
+                    onClick={goNextProj}
+                    title={lang === 'ar' ? 'التصميم التالي' : lang === 'de' ? 'Nächstes Design' : 'Next design'}
+                  >
+                    <span className="gfx-proj-nav__label gfx-proj-nav__label--short">
+                      {lang === 'ar' ? 'التالي' : lang === 'de' ? 'Weiter' : 'Next'}
+                    </span>
+                    <i className={`fa-solid ${isRtl ? 'fa-chevron-left' : 'fa-chevron-right'}`} />
                   </button>
                 </div>
+                )}
+              </div>
+
+              <div className="section-head section-head--graphics" style={{ marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                <h2 className="section-title section-title--graphics" style={{ margin: 0 }}>{t.graphicsTitle}</h2>
+                <button type="button" className="btn-outline-sm" onClick={() => void copyShareLink()}
+                  title={lang === 'ar' ? 'نسخ رابط التصميم' : 'Copy design link'}
+                  style={{ fontSize: 11 }}>
+                  <i className="fa-solid fa-link" /> {lang === 'ar' ? 'نسخ الرابط' : lang === 'de' ? 'Link kopieren' : 'Copy link'}
+                </button>
               </div>
 
               {/* Glassmorphism Hero Gallery */}
@@ -2003,26 +2541,42 @@ ${css}
 
                 {/* Main slide */}
                 <div style={{ position: 'relative', zIndex: 1, background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(20px)', borderRadius: 18, border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden', minHeight: 280, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-                  {isVideo
+                  {isYoutubeSlide
                     ? <iframe src={resolveVideoEmbedSrc(gfxProjectPage.videoUrl) || ''} style={{ width: '100%', height: 440, border: 'none', display: 'block' }} allowFullScreen title="video" />
-                    : imgs[gfxCarouselIdx]
-                      ? <img src={resolveImageSrc(imgs[gfxCarouselIdx])} alt={projectTitle} style={{ width: '100%', maxHeight: 480, objectFit: 'contain', display: 'block' }} />
-                      : <i className="fa-solid fa-image" style={{ fontSize: 48, color: 'rgba(255,255,255,0.2)' }} />
+                    : isModelSlide
+                      ? <GfxModelViewer key={gfxViewSettingsKey(resolveGlbViewSettings(current.settings, isMobileView))} url={current.url} settings={resolveGlbViewSettings(current.settings, isMobileView)} height={440} style={{ width: '100%' }} allowUserControl />
+                      : isImageSlide
+                        ? <GfxMediaSlide
+                            url={current.url}
+                            isVideo={current.isVideo}
+                            alt={projectTitle}
+                            onClick={current.isVideo ? undefined : () => setGfxZoom(true)}
+                            style={{ maxHeight: 480, cursor: current.isVideo ? 'default' : 'zoom-in' }}
+                          />
+                        : <i className="fa-solid fa-image" style={{ fontSize: 48, color: 'rgba(255,255,255,0.2)' }} />
                   }
+
+                  {/* Zoom (enlarge image) button */}
+                  {isImageSlide && current && !current.isVideo && (
+                    <button onClick={() => setGfxZoom(true)}
+                      title={lang === 'ar' ? 'تكبير الصورة' : lang === 'de' ? 'Bild vergrößern' : 'Enlarge image'}
+                      style={{ position: 'absolute', top: 12, insetInlineEnd: 12, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.18)', borderRadius: '50%', width: 42, height: 42, color: '#fff', cursor: 'pointer', fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3 }}>
+                      <i className="fa-solid fa-magnifying-glass-plus" />
+                    </button>
+                  )}
                   {data.watermarkImg && (() => {
-                    const isMainImg = gfxCarouselIdx === 0;
-                    const noWm = isMainImg
-                      ? !!gfxProjectPage.mainImgNoWm
-                      : !!(gfxProjectPage.imagesNoWm?.[gfxCarouselIdx - 1]);
-                    return !noWm && !isVideo ? <img src={data.watermarkImg} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: data.watermarkOpacity ?? 0.15, pointerEvents: 'none' }} /> : null;
+                    const noWm = isImageSlide && current ? current.noWm : true;
+                    return !noWm && isImageSlide && current && !current.isVideo
+                      ? <img src={data.watermarkImg} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: data.watermarkOpacity ?? 0.15, pointerEvents: 'none' }} />
+                      : null;
                   })()}
 
-                  {/* Prev/Next arrows */}
+                  {/* Prev/Next image arrows */}
                   {totalSlides > 1 && (<>
-                    <button onClick={() => setGfxCarouselIdx(i => Math.max(0, i - 1))} style={{ position: 'absolute', top: '50%', insetInlineStart: 12, transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.18)', borderRadius: '50%', width: 44, height: 44, color: '#fff', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+                    <button onClick={prevImg} style={{ position: 'absolute', top: '50%', insetInlineStart: 12, transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.18)', borderRadius: '50%', width: 44, height: 44, color: '#fff', cursor: gfxCarouselIdx > 0 ? 'pointer' : 'not-allowed', opacity: gfxCarouselIdx > 0 ? 1 : 0.35, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
                       <i className={`fa-solid ${isRtl ? 'fa-chevron-right' : 'fa-chevron-left'}`} />
                     </button>
-                    <button onClick={() => setGfxCarouselIdx(i => Math.min(totalSlides - 1, i + 1))} style={{ position: 'absolute', top: '50%', insetInlineEnd: 12, transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.18)', borderRadius: '50%', width: 44, height: 44, color: '#fff', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+                    <button onClick={nextImg} style={{ position: 'absolute', top: '50%', insetInlineEnd: 12, transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.18)', borderRadius: '50%', width: 44, height: 44, color: '#fff', cursor: gfxCarouselIdx < totalSlides - 1 ? 'pointer' : 'not-allowed', opacity: gfxCarouselIdx < totalSlides - 1 ? 1 : 0.35, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
                       <i className={`fa-solid ${isRtl ? 'fa-chevron-left' : 'fa-chevron-right'}`} />
                     </button>
                   </>)}
@@ -2036,20 +2590,48 @@ ${css}
                 </div>
 
                 {/* Thumbnail strip */}
-                {(imgs.length > 1 || gfxProjectPage.videoUrl) && (
+                {totalSlides > 1 && (
                   <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2, position: 'relative', zIndex: 1 }}>
-                    {imgs.map((img, i) => (
+                    {projectSlides.map((slide, i) => (
                       <div key={i} onClick={() => setGfxCarouselIdx(i)}
-                        style={{ flexShrink: 0, width: 72, height: 54, borderRadius: 10, overflow: 'hidden', cursor: 'pointer', border: `2px solid ${gfxCarouselIdx === i ? '#4a90e2' : 'rgba(255,255,255,0.12)'}`, transition: 'border-color 0.2s', background: 'rgba(0,0,0,0.4)' }}>
-                        <img src={resolveImageSrc(img)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        style={{ flexShrink: 0, width: 72, height: 54, borderRadius: 10, overflow: 'hidden', cursor: 'pointer', border: `2px solid ${gfxCarouselIdx === i ? '#4a90e2' : 'rgba(255,255,255,0.12)'}`, transition: 'border-color 0.2s', background: 'rgba(0,0,0,0.4)', position: 'relative' }}>
+                        {slide.kind === 'model' ? (
+                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: slide.settings?.backgroundColor || '#e8eef4' }}>
+                            <i className="fa-solid fa-cube" style={{ color: '#003366', fontSize: 22 }} />
+                          </div>
+                        ) : slide.kind === 'youtube' ? (
+                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(220,0,0,0.4)' }}>
+                            <i className="fa-solid fa-play" style={{ color: '#fff', fontSize: 20 }} />
+                          </div>
+                        ) : slide.isVideo ? (
+                          <>
+                            <GfxMediaSlide url={slide.url} isVideo objectFit="cover" />
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', pointerEvents: 'none' }}>
+                              <i className="fa-solid fa-film" style={{ color: '#fff', fontSize: 16 }} />
+                            </div>
+                          </>
+                        ) : (
+                          <img src={resolveImageSrc(slide.url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        )}
                       </div>
                     ))}
-                    {gfxProjectPage.videoUrl && (
-                      <div onClick={() => setGfxCarouselIdx(imgs.length)}
-                        style={{ flexShrink: 0, width: 72, height: 54, borderRadius: 10, cursor: 'pointer', border: `2px solid ${gfxCarouselIdx === imgs.length ? '#4a90e2' : 'rgba(255,255,255,0.12)'}`, background: 'rgba(220,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <i className="fa-solid fa-play" style={{ color: '#fff', fontSize: 20 }} />
-                      </div>
-                    )}
+                  </div>
+                )}
+
+                {/* Image navigation shortcuts (when multiple slides) */}
+                {totalSlides > 1 && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 10, position: 'relative', zIndex: 1 }}>
+                    <button type="button" onClick={prevImg} disabled={gfxCarouselIdx <= 0}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.18)', background: 'rgba(0,0,0,0.45)', color: '#fff', cursor: gfxCarouselIdx > 0 ? 'pointer' : 'not-allowed', opacity: gfxCarouselIdx > 0 ? 1 : 0.4, fontSize: 12, fontWeight: 600, fontFamily: 'inherit' }}>
+                      <i className={`fa-solid ${isRtl ? 'fa-chevron-right' : 'fa-chevron-left'}`} />
+                      {lang === 'ar' ? 'الصورة السابقة' : lang === 'de' ? 'Vorheriges Bild' : 'Previous image'}
+                    </button>
+                    <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12, fontWeight: 600 }}>{gfxCarouselIdx + 1} / {totalSlides}</span>
+                    <button type="button" onClick={nextImg} disabled={gfxCarouselIdx >= totalSlides - 1}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.18)', background: 'rgba(0,0,0,0.45)', color: '#fff', cursor: gfxCarouselIdx < totalSlides - 1 ? 'pointer' : 'not-allowed', opacity: gfxCarouselIdx < totalSlides - 1 ? 1 : 0.4, fontSize: 12, fontWeight: 600, fontFamily: 'inherit' }}>
+                      {lang === 'ar' ? 'الصورة التالية' : lang === 'de' ? 'Nächstes Bild' : 'Next image'}
+                      <i className={`fa-solid ${isRtl ? 'fa-chevron-left' : 'fa-chevron-right'}`} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -2058,65 +2640,44 @@ ${css}
               <div style={{ background: theme === 'dark' ? 'rgba(255,255,255,0.04)' : '#fff', border: `1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.09)' : '#e4e9f4'}`, borderRadius: 18, padding: '24px 28px', marginBottom: 16 }}>
                 <h1 style={{ margin: '0 0 12px', fontSize: 22, color: theme === 'dark' ? '#dfe9f8' : '#003366', lineHeight: 1.4 }}>{projectTitle}</h1>
                 {projectDesc && <p style={{ margin: '0 0 18px', color: theme === 'dark' ? '#b8cce8' : '#4a5870', lineHeight: 1.85, fontSize: 15 }}>{projectDesc}</p>}
-                {gfxProjectPage.usedSkillsIds.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 22 }}>
-                    {gfxProjectPage.usedSkillsIds.map(id => { const sk = data.skills.find(s => s.id === id); return sk ? <span key={id} className="app-badge">{sk.name}</span> : null; })}
-                  </div>
-                )}
-
-                {/* GLB 3D Model section */}
-                {gfxProjectPage.glbUrl && (
-                  <div style={{ marginBottom: 16, padding: '18px 20px', background: theme === 'dark' ? 'rgba(0,180,130,0.08)' : '#f0fff8', borderRadius: 16, border: `1px solid ${theme === 'dark' ? 'rgba(0,200,140,0.22)' : '#a0e0c8'}` }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                      <span style={{ fontSize: 26 }}>📦</span>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: 15, color: theme === 'dark' ? '#7fddbb' : '#006644' }}>
-                          {lang === 'ar' ? 'ملف ثلاثي الأبعاد GLB' : lang === 'de' ? '3D-Modell GLB' : '3D Model GLB'}
-                        </div>
-                        {gfxProjectPage.glbIsPaid && gfxProjectPage.glbPrice && (
-                          <div style={{ fontSize: 13, color: theme === 'dark' ? '#f0d080' : '#996600', fontWeight: 600 }}>
-                            {lang === 'ar' ? 'السعر: ' : lang === 'de' ? 'Preis: ' : 'Price: '}
-                            {gfxProjectPage.glbPrice} {gfxProjectPage.glbCurrency || 'USD'}
+                {gfxProjectPage.cvSettings.showTools !== false && gfxProjectPage.usedSkillsIds.length > 0 && (
+                  <div style={{ marginBottom: 22 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: theme === 'dark' ? '#a8c8f0' : '#003366', marginBottom: 12 }}>
+                      {lang === 'ar' ? 'البرامج المستخدمة في التصميم' : lang === 'de' ? 'Verwendete Programme' : 'Software used'}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
+                      {gfxProjectPage.usedSkillsIds.map(id => {
+                        const sk = data.skills.find(s => s.id === id);
+                        if (!sk) return null;
+                        const iconSize = sk.size || data.skills[0]?.size || 28;
+                        return (
+                          <div key={id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, minWidth: 64, maxWidth: 88, textAlign: 'center' }}>
+                            <SkillIcon icon={sk.icon} name={sk.name} size={iconSize} />
+                            <span style={{ fontSize: 11, fontWeight: 600, color: theme === 'dark' ? '#b8cce8' : '#4a5870', lineHeight: 1.3 }}>{sk.name}</span>
                           </div>
-                        )}
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                      <a href={gfxProjectPage.glbUrl} target="_blank" rel="noopener noreferrer"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 10, background: theme === 'dark' ? 'rgba(0,180,130,0.25)' : '#006644', color: '#fff', textDecoration: 'none', fontWeight: 700, fontSize: 13, border: `1px solid ${theme === 'dark' ? '#00c88c' : 'transparent'}` }}>
-                        <i className="fa-solid fa-cube" />
-                        {lang === 'ar' ? 'عرض النموذج ثلاثي الأبعاد' : lang === 'de' ? '3D-Modell anzeigen' : 'View 3D Model'}
-                      </a>
-                      {!gfxProjectPage.glbIsPaid && gfxProjectPage.glbFreeUrl && (
-                        <a href={gfxProjectPage.glbFreeUrl} target="_blank" rel="noopener noreferrer" download
-                          onClick={() => trackFileDownload(`GLB: ${projectTitle}`, gfxProjectPage.id)}
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 10, background: '#25d366', color: '#fff', textDecoration: 'none', fontWeight: 700, fontSize: 13 }}>
-                          <i className="fa-solid fa-download" />
-                          {lang === 'ar' ? 'تنزيل مجاني' : lang === 'de' ? 'Kostenlos herunterladen' : 'Free Download'}
-                        </a>
-                      )}
-                      {gfxProjectPage.glbIsPaid && (
-                        <>
-                          {waPhone && (
-                            <a href={`https://api.whatsapp.com/send?phone=${waPhone}&text=${encodeURIComponent(lang === 'ar' ? `أريد الحصول على ملف GLB للمشروع: ${projectTitle}` : lang === 'de' ? `Ich möchte die GLB-Datei für das Projekt: ${projectTitle}` : `I want to get the GLB file for the project: ${projectTitle}`)}`}
-                              target="_blank" rel="noopener noreferrer"
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 10, background: '#25d366', color: '#fff', textDecoration: 'none', fontWeight: 700, fontSize: 13 }}>
-                              <i className="fa-brands fa-whatsapp" style={{ fontSize: 18 }} />WhatsApp
-                            </a>
-                          )}
-                          {contactEmail && (
-                            <a href={`mailto:${contactEmail}?subject=${encodeURIComponent((lang === 'ar' ? 'طلب ملف GLB: ' : lang === 'de' ? 'GLB-Datei anfragen: ' : 'GLB File Request: ') + projectTitle)}`}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 10, background: '#003366', color: '#fff', textDecoration: 'none', fontWeight: 700, fontSize: 13 }}>
-                              <i className="fa-solid fa-envelope" style={{ fontSize: 15 }} />{lang === 'ar' ? 'إيميل' : lang === 'de' ? 'E-Mail' : 'Email'}
-                            </a>
-                          )}
-                        </>
-                      )}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
 
-                <GfxSourceFileDownload item={gfxProjectPage} lang={lang as LangKey} theme={theme} />
+                {/* البرامج والأدوات أعلاه — معاينة 3D في أسفل الصفحة فقط إن وُجد ملف صالح */}
+
+                <GfxProjectDownloads
+                  item={gfxProjectPage}
+                  lang={lang as LangKey}
+                  theme={theme}
+                  projectTitle={projectTitle}
+                  waPhone={waPhone}
+                  contactEmail={contactEmail}
+                  freeBtnColor={
+                    (data.siteSettings?.gfxFreeDownloadBtnColor || '').trim()
+                    || (data.siteSettings?.buttonBgColor || '').trim()
+                    || (data.siteSettings?.accentColor || '').trim()
+                    || '#003366'
+                  }
+                  freeBtnTextColor={(data.siteSettings?.buttonTextColor || '').trim() || '#ffffff'}
+                />
 
                 {/* Request similar design button */}
                 <button onClick={() => setGfxRequestOpen(o => !o)}
@@ -2149,7 +2710,65 @@ ${css}
                     </div>
                   </div>
                 )}
+
+                {/* مجسم 3D في أسفل الصفحة — يظهر فقط عند التفعيل + رابط صالح وغير مُختار كرئيسي */}
+                {(() => {
+                  if (!gfx3dPreviewActive(gfxProjectPage) || gfxModelAsMain(gfxProjectPage)) return null;
+                  const modelUrl = gfxItemModelUrl(gfxProjectPage);
+                  if (!modelUrl) return null;
+                  return (
+                    <div style={{ marginTop: 18 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: theme === 'dark' ? '#a8c8f0' : '#003366', marginBottom: 10 }}>
+                        <i className="fa-solid fa-cube" style={{ marginInlineEnd: 8 }} />
+                        {lang === 'ar' ? 'معاينة ثلاثية الأبعاد' : lang === 'de' ? '3D-Vorschau' : '3D Preview'}
+                      </div>
+                      <GfxModelViewer
+                        key={gfxViewSettingsKey(resolveGlbViewSettings(gfxProjectPage.glbViewSettings, isMobileView))}
+                        url={modelUrl}
+                        settings={resolveGlbViewSettings(gfxProjectPage.glbViewSettings, isMobileView)}
+                        height={320}
+                        style={{ width: '100%' }}
+                        allowUserControl
+                      />
+                    </div>
+                  );
+                })()}
               </div>
+
+              {/* Image zoom lightbox */}
+              {gfxZoom && isImageSlide && current && createPortal(
+                <div onClick={() => setGfxZoom(false)}
+                  style={{ position: 'fixed', inset: 0, zIndex: 100000, background: 'rgba(0,0,0,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, cursor: 'zoom-out' }}>
+                  <button onClick={(e) => { e.stopPropagation(); setGfxZoom(false); }}
+                    title={lang === 'ar' ? 'إغلاق' : lang === 'de' ? 'Schließen' : 'Close'}
+                    style={{ position: 'absolute', top: 18, insetInlineEnd: 18, background: 'rgba(255,255,255,0.14)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '50%', width: 48, height: 48, color: '#fff', cursor: 'pointer', fontSize: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <i className="fa-solid fa-xmark" />
+                  </button>
+                  {totalSlides > 1 && (<>
+                    <button onClick={(e) => { e.stopPropagation(); prevImg(); }}
+                      style={{ position: 'absolute', top: '50%', insetInlineStart: 18, transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.14)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '50%', width: 48, height: 48, color: '#fff', cursor: gfxCarouselIdx > 0 ? 'pointer' : 'not-allowed', opacity: gfxCarouselIdx > 0 ? 1 : 0.35, fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <i className={`fa-solid ${isRtl ? 'fa-chevron-right' : 'fa-chevron-left'}`} />
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); nextImg(); }}
+                      style={{ position: 'absolute', top: '50%', insetInlineEnd: 18, transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.14)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '50%', width: 48, height: 48, color: '#fff', cursor: gfxCarouselIdx < totalSlides - 1 ? 'pointer' : 'not-allowed', opacity: gfxCarouselIdx < totalSlides - 1 ? 1 : 0.35, fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <i className={`fa-solid ${isRtl ? 'fa-chevron-left' : 'fa-chevron-right'}`} />
+                    </button>
+                  </>)}
+                  {current.isVideo ? (
+                    <GfxMediaSlide
+                      url={current.url}
+                      isVideo
+                      alt={projectTitle}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ maxWidth: '96vw', maxHeight: '92vh', borderRadius: 8, boxShadow: '0 10px 60px rgba(0,0,0,0.6)', cursor: 'default' }}
+                    />
+                  ) : (
+                    <img src={resolveImageSrc(current.url)} alt={projectTitle} onClick={(e) => e.stopPropagation()}
+                      style={{ maxWidth: '96vw', maxHeight: '92vh', objectFit: 'contain', borderRadius: 8, boxShadow: '0 10px 60px rgba(0,0,0,0.6)', cursor: 'default' }} />
+                  )}
+                </div>,
+                document.body,
+              )}
             </div>
           );
         }
@@ -2157,8 +2776,8 @@ ${css}
         // ── Gallery Grid ────────────────────────────────────
         return (
           <div className="content-wrap fade-up">
-            <div className="section-head">
-              <h2 className="section-title">{t.graphicsTitle}</h2>
+            <div className="section-head section-head--graphics">
+              <h2 className="section-title section-title--graphics">{t.graphicsTitle}</h2>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 {cvDocVisibleAt(data, 'dev', 'designPortal') && data.cvDocs.find(d => d.id === 'dev') && (
                   <button
@@ -2177,31 +2796,42 @@ ${css}
               </div>
             </div>
 
-            {/* Category Level 1 tabs — desktop pills / mobile dropdown */}
-            <div className="sub-tabs desktop-sub-tabs" style={{ marginBottom: 10 }}>
-              {gfxCats.map(cat => (
-                <button key={cat.id} className={`tab-btn${selCat?.id === cat.id ? ' active' : ''}`}
-                  onClick={() => { setGfxSelCatId(cat.id); setGfxSelSubId(''); setGfxSearch(''); setGfxTab(0); }}>
-                  <i className={`fa-solid ${cat.icon || 'fa-folder'}`} style={{ marginInlineEnd: 6 }} />
-                  {pickML(cat.name, lang as LangKey)}
+            {/* Visitor browse mode toggle — default from admin settings */}
+            <div style={{ display: 'flex', justifyContent: isRtl ? 'flex-start' : 'flex-end', marginBottom: 14 }}>
+              <div style={{ display: 'inline-flex', border: `1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.14)' : '#cde'}`, borderRadius: 10, overflow: 'hidden' }}>
+                <button type="button" onClick={() => { setGfxBrowseView('all'); setGfxSelSubId(''); }}
+                  title={lang === 'ar' ? 'عرض كل التصنيفات والفروع' : lang === 'de' ? 'Alle Kategorien anzeigen' : 'Show all categories'}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', cursor: 'pointer', padding: '7px 14px', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, background: browseMode === 'all' ? 'var(--navy)' : 'transparent', color: browseMode === 'all' ? '#fff' : (theme === 'dark' ? '#cdd9ec' : '#003366') }}>
+                  <i className="fa-solid fa-table-cells-large" />
+                  {lang === 'ar' ? 'عرض الكل' : lang === 'de' ? 'Alle' : 'Show all'}
                 </button>
-              ))}
+                <button type="button" onClick={() => { setGfxBrowseView('byCategory'); setGfxSelSubId(''); }}
+                  title={lang === 'ar' ? 'اختيار تصنيف ثم فرع' : lang === 'de' ? 'Nach Kategorie filtern' : 'Browse by category'}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', cursor: 'pointer', padding: '7px 14px', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, background: browseMode === 'byCategory' ? 'var(--navy)' : 'transparent', color: browseMode === 'byCategory' ? '#fff' : (theme === 'dark' ? '#cdd9ec' : '#003366') }}>
+                  <i className="fa-solid fa-filter" />
+                  {lang === 'ar' ? 'حسب التصنيف' : lang === 'de' ? 'Kategorie' : 'By category'}
+                </button>
+              </div>
             </div>
-            <AppPicker
-              className="mobile-tab-select-replaced"
-              value={selCat?.id || (gfxCats[0]?.id || '')}
-              aria-label={lang === 'ar' ? 'تصنيف التصاميم' : 'Design category'}
-              options={gfxCats.map(cat => ({
-                value: cat.id,
-                label: pickML(cat.name, lang as LangKey),
-              }))}
-              onChange={val => {
-                setGfxSelCatId(val);
-                setGfxSelSubId('');
-                setGfxSearch('');
-                setGfxTab(0);
-              }}
-            />
+
+            {/* Category dropdown — byCategory mode (web + mobile) */}
+            {browseMode === 'byCategory' && (
+              <AppPicker
+                className="gfx-cat-picker"
+                value={selCat?.id || (gfxCats[0]?.id || '')}
+                aria-label={lang === 'ar' ? 'تصنيف التصاميم' : 'Design category'}
+                options={gfxCats.map(cat => ({
+                  value: cat.id,
+                  label: pickML(cat.name, lang as LangKey),
+                }))}
+                onChange={val => {
+                  setGfxSelCatId(val);
+                  setGfxSelSubId('');
+                  setGfxSearch('');
+                  setGfxTab(0);
+                }}
+              />
+            )}
 
             <>
                 {/* Search bar */}
@@ -2212,43 +2842,66 @@ ${css}
                   {gfxSearch && <button onClick={() => setGfxSearch('')} style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', [isRtl ? 'left' : 'right']: 12, background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: 14 }}><i className="fa-solid fa-xmark" /></button>}
                 </div>
 
-                {/* Sub-category chips */}
-                {selCat && selCat.subCategories.length > 0 && (
-                  <div className="lab-cats" style={{ marginBottom: 18 }}>
-                    <button className={`lab-cat-chip${!gfxSelSubId ? ' active' : ''}`} onClick={() => setGfxSelSubId('')}>
-                      {lang === 'ar' ? 'الكل' : lang === 'de' ? 'Alle' : 'All'}
-                    </button>
-                    {selCat.subCategories.map(sub => (
-                      <button key={sub.id} className={`lab-cat-chip${gfxSelSubId === sub.id ? ' active' : ''}`}
-                        onClick={() => setGfxSelSubId(sub.id)}>
-                        {pickML(sub.name, lang as LangKey)} ({sub.items.length})
-                      </button>
-                    ))}
-                  </div>
+                {/* Branch dropdown — byCategory mode only */}
+                {browseMode === 'byCategory' && selCat && selCat.subCategories.length > 0 && (
+                  <AppPicker
+                    className="gfx-sub-picker"
+                    value={gfxSelSubId}
+                    aria-label={lang === 'ar' ? 'فرع التصنيف' : 'Design branch'}
+                    options={[
+                      { value: '', label: `${allLabel} (${totalInCat})` },
+                      ...selCat.subCategories.map(sub => ({
+                        value: sub.id,
+                        label: `${pickML(sub.name, lang as LangKey)} (${sub.items.length})`,
+                      })),
+                    ]}
+                    onChange={val => setGfxSelSubId(val)}
+                  />
                 )}
 
-                {/* Grouped by sub-category (with elegant navy dividers) when "All" selected and no search */}
-                {!gfxSelSubId && !gfxSearch && selCat && selCat.subCategories.length > 1 ? (
-                  selCat.subCategories.map(sub => sub.items.length === 0 ? null : (
-                    <div key={sub.id}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 14, margin: '22px 0 16px' }}>
-                        <div style={{ height: 2, flex: 1, background: `linear-gradient(${isRtl ? '270deg' : '90deg'}, rgba(0,51,102,0.08), #003366)`, borderRadius: 2 }} />
-                        <span style={{ fontWeight: 700, fontSize: 13, color: theme === 'dark' ? '#7ab0e8' : '#003366', whiteSpace: 'nowrap', padding: '4px 14px', borderRadius: 20, background: theme === 'dark' ? 'rgba(0,51,102,0.3)' : 'rgba(0,51,102,0.07)', border: `1px solid ${theme === 'dark' ? 'rgba(68,136,255,0.2)' : 'rgba(0,51,102,0.15)'}` }}>
-                          {pickML(sub.name, lang as LangKey)} · {sub.items.length}
-                        </span>
-                        <div style={{ height: 2, flex: 1, background: `linear-gradient(${isRtl ? '90deg' : '270deg'}, rgba(0,51,102,0.08), #003366)`, borderRadius: 2 }} />
+                {browseMode === 'all' ? (
+                  (() => {
+                    const searching = !!gfxSearch.trim();
+                    const sections = gfxCats.map(cat => {
+                      const catTotal = cat.subCategories.reduce((n, s) => n + s.items.length, 0);
+                      const subs = cat.subCategories.map(sub => ({
+                        sub,
+                        items: sub.items.filter(itemMatchesSearch),
+                      })).filter(({ items }) => !searching || items.length > 0);
+                      if (searching && subs.length === 0) return null;
+                      return (
+                        <div key={cat.id} className="gfx-cat-section">
+                          <div className="gfx-cat-divider">
+                            <i className={`fa-solid ${cat.icon || 'fa-folder'}`} />
+                            {pickML(cat.name, lang as LangKey)} · {catTotal}
+                          </div>
+                          {subs.map(({ sub, items }) => (
+                            <div key={sub.id} className="gfx-sub-section">
+                              {renderSubDivider(pickML(sub.name, lang as LangKey), sub.items.length)}
+                              {renderSubGrid(items)}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }).filter(Boolean);
+                    if (!sections.length) return renderEmptyGallery(searching);
+                    return sections;
+                  })()
+                ) : showAllGrouped ? (
+                  selCat!.subCategories.length > 0 ? selCat!.subCategories.map(sub => {
+                    const items = sub.items.filter(itemMatchesSearch);
+                    return (
+                      <div key={sub.id} className="gfx-sub-section">
+                        {renderSubDivider(pickML(sub.name, lang as LangKey), sub.items.length)}
+                        {renderSubGrid(items)}
                       </div>
-                      <div className="gfx-dyn-grid" style={gfxGridStyleResponsive({ ...DEFAULT_GFX_GRID, ...(data.gfxGridSettings || {}) }, isMobileView)}>{sub.items.map(renderCard)}</div>
-                    </div>
-                  ))
+                    );
+                  }) : renderEmptyGallery(false)
                 ) : (
-                  <div className="gfx-dyn-grid" style={gfxGridStyleResponsive({ ...DEFAULT_GFX_GRID, ...(data.gfxGridSettings || {}) }, isMobileView)}>
-                    {searchedItems.length === 0 ? (
-                      <div style={{ gridColumn: '1/-1', textAlign: 'center', color: '#999', padding: '40px 0' }}>
-                        <i className="fa-solid fa-images" style={{ fontSize: '2.5rem', color: theme === 'dark' ? '#5b9bff' : '#003366', marginBottom: 14, display: 'block' }} />
-                        {gfxSearch ? (lang === 'ar' ? 'لا توجد نتائج' : lang === 'de' ? 'Keine Ergebnisse' : 'No results found') : (lang === 'ar' ? 'لا توجد مشاريع بعد' : lang === 'de' ? 'Noch keine Projekte' : 'No projects yet')}
-                      </div>
-                    ) : searchedItems.map(renderCard)}
+                  <div className="gfx-dyn-grid" style={gridStyle}>
+                    {searchedItems.length === 0
+                      ? renderEmptyGallery(!!gfxSearch.trim())
+                      : searchedItems.map(renderCard)}
                   </div>
                 )}
             </>
@@ -2256,11 +2909,66 @@ ${css}
         );
       })()}
 
+      {/* ── Software Portal: Coming soon modal (grid + detail) ── */}
+      {portal === "software" && webProjSoonOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="web-proj-soon-title"
+          onClick={() => setWebProjSoonOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 12000,
+            background: 'rgba(0, 12, 28, 0.72)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: 420,
+              background: theme === 'dark' ? '#0e1a32' : '#ffffff',
+              color: theme === 'dark' ? '#e8f0ff' : '#0a1a2e',
+              borderRadius: 18,
+              border: theme === 'dark' ? '1px solid rgba(120,160,255,0.28)' : '1px solid #c5d0e0',
+              boxShadow: '0 24px 60px rgba(0,0,0,0.45)',
+              padding: '28px 24px 22px',
+              textAlign: 'center',
+            }}
+          >
+            <div style={{
+              width: 56, height: 56, borderRadius: '50%', margin: '0 auto 14px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(0, 120, 255, 0.14)', color: '#3d8bfd', fontSize: 22,
+            }}>
+              <i className="fa-solid fa-clock" />
+            </div>
+            <h3 id="web-proj-soon-title" style={{ margin: '0 0 10px', fontSize: 18, fontWeight: 800, color: theme === 'dark' ? '#fff' : '#003366' }}>
+              {t.appComingSoonTitle}
+            </h3>
+            <p style={{ margin: '0 0 20px', fontSize: 14, lineHeight: 1.7, color: theme === 'dark' ? '#c8d6f0' : '#334455' }}>
+              {t.appComingSoon}
+            </p>
+            <button
+              type="button"
+              onClick={() => setWebProjSoonOpen(false)}
+              style={{
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                background: '#003366', color: '#fff', fontWeight: 800, fontSize: 14,
+                borderRadius: 12, padding: '11px 28px', minWidth: 120,
+              }}
+            >
+              {t.appComingSoonOk}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Software Portal ─────────────────────────────────── */}
       {portal === "software" && !webProjectPage && (
         <div className="content-wrap fade-up">
-          <div className="section-head">
-            <h2 className="section-title">{t.softwareTitle}</h2>
+          <div className="section-head section-head--software">
+            <h2 className="section-title section-title--software">{t.softwareTitle}</h2>
             <button className="btn-back mobile-hidden" onClick={goHome}>
               {t.backHome}{" "}
               <i className={`fa-solid ${isRtl ? "fa-arrow-right" : "fa-arrow-left"}`} />
@@ -2305,12 +3013,14 @@ ${css}
                             key={proj.id}
                             className="glass"
                             style={{ borderRadius: 18, overflow: 'hidden', cursor: 'pointer', transition: 'transform 0.22s, box-shadow 0.22s', boxShadow: '0 4px 18px rgba(0,51,102,0.1)' }}
-                            onClick={() => { setWebProjectPage(proj); setWebProjCarouselIdx(0); }}
+                            onClick={() => { setWebProjectPage(proj); setWebProjCarouselIdx(0); setWebProjSoonOpen(false); }}
                             onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-5px)'; (e.currentTarget as HTMLDivElement).style.boxShadow = '0 12px 32px rgba(0,51,102,0.22)'; }}
                             onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.transform = 'none'; (e.currentTarget as HTMLDivElement).style.boxShadow = '0 4px 18px rgba(0,51,102,0.1)'; }}
                           >
                             {proj.mainImg ? (
-                              <img src={resolveImageSrc(proj.mainImg)} alt={pickML(proj.title, lang as LangKey)} className="card-thumb-img" style={{ objectFit: 'cover' }} />
+                              <div className="web-proj-thumb-wrap" style={webProjThumbStyle(proj.imgBgColor)}>
+                                <img src={resolveImageSrc(proj.mainImg)} alt={pickML(proj.title, lang as LangKey)} className="card-thumb-img" style={{ objectFit: webProjImgFit(proj.imgBgColor) }} />
+                              </div>
                             ) : (
                               <div className="card-thumb-placeholder" style={{ background: 'linear-gradient(135deg,#003366 0%,#1a5276 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <i className="fa-solid fa-globe" style={{ fontSize: 42, color: 'rgba(255,255,255,0.25)' }} />
@@ -2328,14 +3038,58 @@ ${css}
                               )}
                               {/* Store/visit quick links */}
                               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-                                {proj.liveUrl && (
-                                  <span style={{ fontSize: 10, background: '#003366', color: '#fff', borderRadius: 20, padding: '3px 10px', fontWeight: 700 }}><i className="fa-solid fa-globe" style={{ marginInlineEnd: 4 }} />{lang === 'ar' ? 'زيارة' : 'Visit'}</span>
+                                {isUsableProjectLink(proj.liveUrl) && (
+                                  <a
+                                    href={normalizeExternalUrl(proj.liveUrl)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ fontSize: 10, background: '#003366', color: '#fff', borderRadius: 20, padding: '3px 10px', fontWeight: 700, textDecoration: 'none' }}
+                                  >
+                                    <i className="fa-solid fa-globe" style={{ marginInlineEnd: 4 }} />{lang === 'ar' ? 'زيارة' : 'Visit'}
+                                  </a>
                                 )}
-                                {proj.googlePlayUrl && (
-                                  <span style={{ fontSize: 10, background: '#01875f', color: '#fff', borderRadius: 20, padding: '3px 10px', fontWeight: 700 }}><i className="fa-brands fa-google-play" style={{ marginInlineEnd: 4 }} />Play</span>
+                                {proj.googlePlayVisible !== false && (
+                                  isUsableProjectLink(proj.googlePlayUrl || '') ? (
+                                    <a
+                                      href={normalizeExternalUrl(proj.googlePlayUrl!)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={e => e.stopPropagation()}
+                                      style={{ fontSize: 10, background: '#01875f', color: '#fff', borderRadius: 20, padding: '3px 10px', fontWeight: 700, textDecoration: 'none' }}
+                                    >
+                                      <i className="fa-brands fa-google-play" style={{ marginInlineEnd: 4 }} />Google Play
+                                    </a>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={e => { e.stopPropagation(); setWebProjSoonOpen(true); }}
+                                      style={{ fontSize: 10, background: '#01875f', color: '#fff', borderRadius: 20, padding: '3px 10px', fontWeight: 700, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+                                    >
+                                      <i className="fa-brands fa-google-play" style={{ marginInlineEnd: 4 }} />Google Play
+                                    </button>
+                                  )
                                 )}
-                                {proj.appleStoreUrl && (
-                                  <span style={{ fontSize: 10, background: '#555', color: '#fff', borderRadius: 20, padding: '3px 10px', fontWeight: 700 }}><i className="fa-brands fa-apple" style={{ marginInlineEnd: 4 }} />App Store</span>
+                                {proj.appleStoreVisible !== false && (
+                                  isUsableProjectLink(proj.appleStoreUrl || '') ? (
+                                    <a
+                                      href={normalizeExternalUrl(proj.appleStoreUrl!)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={e => e.stopPropagation()}
+                                      style={{ fontSize: 10, background: '#555', color: '#fff', borderRadius: 20, padding: '3px 10px', fontWeight: 700, textDecoration: 'none' }}
+                                    >
+                                      <i className="fa-brands fa-apple" style={{ marginInlineEnd: 4 }} />App Store
+                                    </a>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={e => { e.stopPropagation(); setWebProjSoonOpen(true); }}
+                                      style={{ fontSize: 10, background: '#555', color: '#fff', borderRadius: 20, padding: '3px 10px', fontWeight: 700, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+                                    >
+                                      <i className="fa-brands fa-apple" style={{ marginInlineEnd: 4 }} />App Store
+                                    </button>
+                                  )
                                 )}
                               </div>
                             </div>
@@ -2387,6 +3141,22 @@ ${css}
           {/* ── Code Labs Sub-Tab ── */}
           {softSubTab === 'labs' && (
             <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+                <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0, maxWidth: 560 }}>
+                  {lang === 'ar'
+                    ? 'أضف مشروعك البرمجي — يظهر لك فوراً على جهازك، ويُرسل للمراجعة. لن يُنشر للجميع إلا بعد موافقتي.'
+                    : lang === 'de'
+                      ? 'Fügen Sie Ihr Projekt hinzu — lokal sichtbar, zur Prüfung gesendet. Öffentlich erst nach Freigabe.'
+                      : 'Add your project — visible to you locally, sent for review. Public only after approval.'}
+                </p>
+                <button
+                  className="btn-prime"
+                  onClick={() => openVisitorLabEditor()}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}
+                >
+                  <i className="fa-solid fa-plus" /> {t.labAddProject}
+                </button>
+              </div>
               <div className="lab-cats">
                 <button className={`lab-cat-chip${activeCat === null ? ' active' : ''}`} onClick={() => setActiveCat(null)}>
                   {lang === 'ar' ? 'الكل' : lang === 'de' ? 'Alle' : 'All'}
@@ -2398,17 +3168,43 @@ ${css}
                 ))}
               </div>
               <div className="lab-grid">
-                {filteredSnippets.map((s, i) => {
-                  const realIdx = data.softwareSnippets.indexOf(s);
+                {labGridItems.map((item) => {
+                  if (item.kind === 'visitor') {
+                    const p = item.project;
+                    const statusLabel = p.status === 'rejected' ? t.labStatusRejected : p.status === 'approved' ? t.labStatusApproved : t.labStatusPending;
+                    const statusClass = p.status === 'rejected' ? 'lab-status-rejected' : p.status === 'approved' ? 'lab-status-approved' : 'lab-status-pending';
+                    return (
+                      <div
+                        key={`v-${p.localId}`}
+                        className={`lab-card glass lab-card-visitor${visitorLabDraft?.localId === p.localId && playgroundMode ? ' selected' : ''}`}
+                        onClick={() => openVisitorLabEditor(p)}
+                      >
+                        <div className="lab-thumb">
+                          <iframe title={`visitor-${p.localId}`} srcDoc={buildThumbSrc(p.codeHtml, p.codeCss)} sandbox={LAB_IFRAME_SANDBOX} scrolling="no" loading="lazy" />
+                        </div>
+                        <div className="lab-card-body">
+                          <span className={`lab-visitor-status ${statusClass}`}>{statusLabel}</span>
+                          {p.category && <span className="lab-cat-badge">{p.category}</span>}
+                          <div className="lab-card-title">{p.title || t.labVisitorOnly}</div>
+                          <div className="lab-card-desc">{p.desc || t.labVisitorOnly}</div>
+                          {p.adminNote && p.status === 'rejected' && (
+                            <div className="lab-visitor-note">{p.adminNote}</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+                  const s = item.snippet;
+                  const realIdx = item.index;
                   return (
-                    <div key={i} className={`lab-card glass${selectedSnippetIdx === realIdx ? ' selected' : ''}`} onClick={() => openSnippetEditor(realIdx)}>
+                    <div key={`p-${realIdx}`} className={`lab-card glass${selectedSnippetIdx === realIdx && labEditorMode === 'published' ? ' selected' : ''}`} onClick={() => openSnippetEditor(realIdx)}>
                       <div className="lab-thumb">
-                        <iframe title={`thumb-${realIdx}`} srcDoc={buildThumbSrc(s.codeHtml, s.codeCss)} sandbox="allow-scripts allow-same-origin" scrolling="no" loading="eager" />
+                        <iframe title={`thumb-${realIdx}`} srcDoc={buildThumbSrc(s.codeHtml, s.codeCss)} sandbox={LAB_IFRAME_SANDBOX} scrolling="no" loading="eager" />
                       </div>
                       <div className="lab-card-body">
                         {s.category && <span className="lab-cat-badge">{s.category}</span>}
-                        <div className="lab-card-title">{s.title}</div>
-                        <div className="lab-card-desc">{s.desc}</div>
+                        <div className="lab-card-title">{pickML(s.title, lang as LangKey)}</div>
+                        <div className="lab-card-desc">{pickML(s.desc, lang as LangKey)}</div>
                       </div>
                     </div>
                   );
@@ -2424,15 +3220,23 @@ ${css}
         <div className="content-wrap fade-up">
           <div className="section-head">
             <h2 className="section-title">{pickML(webProjectPage.title, lang as LangKey)}</h2>
-            <button className="btn-back" onClick={() => setWebProjectPage(null)}>
-              {t.backToLab}{" "}
-              <i className={`fa-solid ${isRtl ? "fa-arrow-right" : "fa-arrow-left"}`} />
-            </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button type="button" className="btn-outline-sm" onClick={() => void copyShareLink()}
+                style={{ fontSize: 11 }}>
+                <i className="fa-solid fa-link" /> {lang === 'ar' ? 'نسخ الرابط' : lang === 'de' ? 'Link kopieren' : 'Copy link'}
+              </button>
+              <button className="btn-back" onClick={() => { setWebProjectPage(null); setWebProjSoonOpen(false); }}>
+                {t.backToLab}{" "}
+                <i className={`fa-solid ${isRtl ? "fa-arrow-right" : "fa-arrow-left"}`} />
+              </button>
+            </div>
           </div>
 
           {/* ── MEDIA: Main image + carousel + video at the top ── */}
           {webProjectPage.mainImg && webProjectPage.images.length === 0 && (
-            <img src={resolveImageSrc(webProjectPage.mainImg)} alt={pickML(webProjectPage.title, lang as LangKey)} style={{ width: '100%', maxHeight: 440, objectFit: 'cover', borderRadius: 18, marginBottom: 20, display: 'block' }} />
+            <div className="web-proj-thumb-wrap" style={{ ...webProjThumbStyle(webProjectPage.imgBgColor), borderRadius: 18, marginBottom: 20, overflow: 'hidden', height: 320, maxHeight: 440 }}>
+              <img src={resolveImageSrc(webProjectPage.mainImg)} alt={pickML(webProjectPage.title, lang as LangKey)} style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', display: 'block' }} />
+            </div>
           )}
 
           {webProjectPage.images.length > 0 && (
@@ -2440,7 +3244,7 @@ ${css}
               {/* Thumbnails row */}
               <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 10 }}>
                 {webProjectPage.mainImg && (
-                  <img src={resolveImageSrc(webProjectPage.mainImg)} alt="main" style={{ height: 72, width: 108, borderRadius: 10, objectFit: 'cover', cursor: 'pointer', flexShrink: 0, border: webProjCarouselIdx === -1 ? '3px solid #003366' : '3px solid transparent', transition: 'border 0.2s' }}
+                  <img src={resolveImageSrc(webProjectPage.mainImg)} alt="main" style={{ height: 72, width: 108, borderRadius: 10, objectFit: 'cover', cursor: 'pointer', flexShrink: 0, border: webProjCarouselIdx === -1 ? '3px solid #003366' : '3px solid transparent', transition: 'border 0.2s', background: webProjectPage.imgBgColor || undefined }}
                     onClick={() => setWebProjCarouselIdx(-1)} />
                 )}
                 {webProjectPage.images.map((img, i) => (
@@ -2451,7 +3255,11 @@ ${css}
               {/* Main large image */}
               {(() => {
                 const src = webProjCarouselIdx === -1 ? webProjectPage.mainImg : webProjectPage.images[webProjCarouselIdx];
-                return src ? <img src={resolveImageSrc(src)} alt="" style={{ width: '100%', maxHeight: 500, objectFit: 'contain', borderRadius: 16, marginTop: 6, background: 'rgba(0,0,0,0.04)', display: 'block' }} /> : null;
+                return src ? (
+                  <div className="web-proj-thumb-wrap" style={{ ...webProjThumbStyle(webProjectPage.imgBgColor), borderRadius: 16, marginTop: 6, overflow: 'hidden', height: 360 }}>
+                    <img src={resolveImageSrc(src)} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', display: 'block' }} />
+                  </div>
+                ) : null;
               })()}
             </div>
           )}
@@ -2463,32 +3271,49 @@ ${css}
           )}
 
           {/* ── ACTION BUTTONS: Visit / Play Store / App Store / GitHub ── */}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 22 }}>
-            {webProjectPage.liveUrl && (
-              <a href={webProjectPage.liveUrl} target="_blank" rel="noopener noreferrer"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: '#003366', color: '#fff', borderRadius: 14, padding: '13px 26px', fontWeight: 800, fontSize: 15, textDecoration: 'none' }}>
+          <div className="web-proj-action-row">
+            {isUsableProjectLink(webProjectPage.liveUrl) && (
+              <a href={normalizeExternalUrl(webProjectPage.liveUrl)} target="_blank" rel="noopener noreferrer"
+                className="web-proj-action-btn web-proj-action-btn--visit">
                 <i className="fa-solid fa-arrow-up-right-from-square" /> {t.visitWebsite}
               </a>
             )}
-            {webProjectPage.googlePlayUrl && (
-              <a href={webProjectPage.googlePlayUrl} target="_blank" rel="noopener noreferrer"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: '#01875f', color: '#fff', borderRadius: 14, padding: '13px 26px', fontWeight: 800, fontSize: 15, textDecoration: 'none' }}>
-                <i className="fa-brands fa-google-play" /> {lang === 'ar' ? 'Google Play' : 'Google Play'}
-              </a>
+            {webProjectPage.googlePlayVisible !== false && (
+              isUsableProjectLink(webProjectPage.googlePlayUrl || '') ? (
+                <a href={normalizeExternalUrl(webProjectPage.googlePlayUrl!)} target="_blank" rel="noopener noreferrer"
+                  className="web-proj-action-btn web-proj-action-btn--play">
+                  <i className="fa-brands fa-google-play" /> Google Play
+                </a>
+              ) : (
+                <button type="button" onClick={() => setWebProjSoonOpen(true)}
+                  className="web-proj-action-btn web-proj-action-btn--play">
+                  <i className="fa-brands fa-google-play" /> Google Play
+                </button>
+              )
             )}
-            {webProjectPage.appleStoreUrl && (
-              <a href={webProjectPage.appleStoreUrl} target="_blank" rel="noopener noreferrer"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: '#1c1c1e', color: '#fff', borderRadius: 14, padding: '13px 26px', fontWeight: 800, fontSize: 15, textDecoration: 'none' }}>
-                <i className="fa-brands fa-apple" /> {lang === 'ar' ? 'App Store' : 'App Store'}
-              </a>
-            )}
-            {webProjectPage.githubUrl && webProjectPage.githubVisible !== false && (
-              <a href={webProjectPage.githubUrl} target="_blank" rel="noopener noreferrer"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: '#1a1a2e', color: '#fff', borderRadius: 14, padding: '13px 26px', fontWeight: 800, fontSize: 15, textDecoration: 'none', border: '2px solid #444' }}>
-                <i className="fa-brands fa-github" /> {t.viewOnGithub}
-              </a>
+            {webProjectPage.appleStoreVisible !== false && (
+              isUsableProjectLink(webProjectPage.appleStoreUrl || '') ? (
+                <a href={normalizeExternalUrl(webProjectPage.appleStoreUrl!)} target="_blank" rel="noopener noreferrer"
+                  className="web-proj-action-btn web-proj-action-btn--apple">
+                  <i className="fa-brands fa-apple" /> App Store
+                </a>
+              ) : (
+                <button type="button" onClick={() => setWebProjSoonOpen(true)}
+                  className="web-proj-action-btn web-proj-action-btn--apple">
+                  <i className="fa-brands fa-apple" /> App Store
+                </button>
+              )
             )}
           </div>
+          {webProjectPage.githubUrl && webProjectPage.githubVisible !== false && (
+            <div style={{ marginBottom: 22 }}>
+              <a href={normalizeExternalUrl(webProjectPage.githubUrl)} target="_blank" rel="noopener noreferrer"
+                className="web-proj-action-btn web-proj-action-btn--github"
+                style={{ width: '100%', padding: '12px 16px', fontSize: 13 }}>
+                <i className="fa-brands fa-github" /> {t.viewOnGithub}
+              </a>
+            </div>
+          )}
 
           {/* ── Tags ── */}
           {webProjectPage.tags.length > 0 && (
@@ -2507,71 +3332,225 @@ ${css}
       )}
 
       {/* ── Code Lab Playground (full-page) ─────────────────── */}
-      {portal === "software" && selectedSnippetIdx !== null && playgroundMode && (
-        <div style={{ position: 'fixed', inset: 0, background: '#0d0d1a', zIndex: 9000, display: 'flex', flexDirection: 'column' }}>
-          {/* Playground Header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', background: '#111', borderBottom: '1px solid #222', flexShrink: 0, flexWrap: 'wrap' }}>
-            <button onClick={() => { setPlaygroundMode(false); setSelectedSnippetIdx(null); }}
-              style={{ background: '#c00', border: 'none', borderRadius: 8, padding: '6px 14px', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>
+      {portal === "software" && (selectedSnippetIdx !== null || visitorLabDraft) && playgroundMode && (
+        <div className="lab-playground">
+          {/* ── Site navbar inside playground ── */}
+          <nav className="lab-playground-navbar">
+            <a href="#" className="lab-playground-logo" onClick={(e) => { e.preventDefault(); closeLabPlayground(); goHome(); }}>
+              {data.siteSettings?.logoType === 'image' && data.siteSettings.logoImg
+                ? <img src={data.siteSettings.logoImg} alt="logo" />
+                : <AlaaLogo color={data.siteSettings?.logoColor || '#4488ff'} size={28} />}
+              <span>
+                {(lang as LangKey) === 'ar' ? 'م.علاء أحمد المصري' : (lang as LangKey) === 'de' ? 'Ing. Alaa Ahmad Almasri' : 'Eng. Alaa Ahmad Almasri'}
+              </span>
+            </a>
+            <div className="lang-dd" ref={labLangDdRef}>
+              <button type="button" className="lab-playground-lang-btn" onClick={() => setLangOpen((o) => !o)} aria-expanded={langOpen}>
+                <i className="fa-solid fa-globe" />
+                {lang === 'ar' ? 'اللغة' : lang === 'de' ? 'Sprache' : 'Language'}
+                <i className={`fa-solid fa-chevron-down lang-dd-caret${langOpen ? ' open' : ''}`} />
+              </button>
+            </div>
+          </nav>
+
+          <div className="lab-playground-header">
+            <button type="button" className="lab-playground-close" onClick={closeLabPlayground}>
               <i className="fa-solid fa-xmark" /> {lang === 'ar' ? 'إغلاق' : 'Close'}
             </button>
-            <span style={{ color: '#4488ff', fontWeight: 700, fontSize: 15 }}>
-              <i className="fa-solid fa-code" style={{ marginInlineEnd: 8 }} />
-              {data.softwareSnippets[selectedSnippetIdx]?.title}
+            <span className="lab-playground-title">
+              <i className="fa-solid fa-code" />
+              {labEditorMode === 'visitor'
+                ? (visitorLabDraft?.title || t.labAddProject)
+                : pickML(data.softwareSnippets[selectedSnippetIdx!]?.title, lang as LangKey)}
             </span>
-            {data.softwareSnippets[selectedSnippetIdx]?.desc && (
-              <span style={{ fontSize: 12, color: '#888', fontStyle: 'italic' }}>{data.softwareSnippets[selectedSnippetIdx]?.desc}</span>
+            {labEditorMode === 'published' && pickML(data.softwareSnippets[selectedSnippetIdx!]?.desc, lang as LangKey) && (
+              <span className="lab-playground-desc">{pickML(data.softwareSnippets[selectedSnippetIdx!]?.desc, lang as LangKey)}</span>
             )}
-            <div style={{ marginInlineStart: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button className="btn-copy" onClick={() => navigator.clipboard.writeText(snippetHtml)}><i className="fa-brands fa-html5" /> HTML</button>
-              <button className="btn-copy" onClick={() => navigator.clipboard.writeText(snippetCss)}><i className="fa-brands fa-css3-alt" /> CSS</button>
-              {snippetJs && <button className="btn-copy" onClick={() => navigator.clipboard.writeText(snippetJs)}><i className="fa-brands fa-js" /> JS</button>}
+            {labEditorMode === 'visitor' && (
+              <div className="lab-playground-visitor-fields">
+                <input
+                  type="text"
+                  placeholder={lang === 'ar' ? 'عنوان المشروع' : 'Project title'}
+                  value={visitorLabDraft?.title || ''}
+                  onChange={(e) => setVisitorLabDraft((d) => d ? { ...d, title: e.target.value } : d)}
+                />
+                <input
+                  type="text"
+                  placeholder={lang === 'ar' ? 'وصف قصير' : 'Short description'}
+                  value={visitorLabDraft?.desc || ''}
+                  onChange={(e) => setVisitorLabDraft((d) => d ? { ...d, desc: e.target.value } : d)}
+                />
+                <input
+                  type="text"
+                  placeholder={lang === 'ar' ? 'الفئة' : 'Category'}
+                  value={visitorLabDraft?.category || ''}
+                  onChange={(e) => setVisitorLabDraft((d) => d ? { ...d, category: e.target.value } : d)}
+                />
+                <input
+                  type="text"
+                  placeholder={t.labVisitorContact}
+                  value={visitorLabDraft?.visitorContact || ''}
+                  onChange={(e) => setVisitorLabDraft((d) => d ? { ...d, visitorContact: e.target.value } : d)}
+                  dir="ltr"
+                />
+                <button
+                  type="button"
+                  className="btn-prime"
+                  disabled={visitorSubmitting}
+                  onClick={() => void handleVisitorLabSubmit()}
+                  style={{ padding: '6px 14px', fontSize: 12, opacity: visitorSubmitting ? 0.7 : 1 }}
+                >
+                  <i className={`fa-solid ${visitorSubmitting ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`} /> {t.labSubmitProject}
+                </button>
+              </div>
+            )}
+            {visitorSubmitMsg && labEditorMode === 'visitor' && (
+              <span className={`lab-playground-msg${visitorSubmitMsg.type === 'ok' ? ' lab-playground-msg--ok' : ' lab-playground-msg--err'}`}>
+                {visitorSubmitMsg.text}
+              </span>
+            )}
+            <div className="lab-playground-actions">
+              <button type="button" className="btn-copy" onClick={() => navigator.clipboard.writeText(snippetHtml)}><i className="fa-brands fa-html5" /> HTML</button>
+              <button type="button" className="btn-copy" onClick={() => navigator.clipboard.writeText(snippetCss)}><i className="fa-brands fa-css3-alt" /> CSS</button>
+              {snippetJs && <button type="button" className="btn-copy" onClick={() => navigator.clipboard.writeText(snippetJs)}><i className="fa-brands fa-js" /> JS</button>}
+              <span className="lab-playground-actions-sep" />
+              <button
+                type="button"
+                className="btn-copy"
+                title={lang === 'ar' ? 'تنزيل ملف HTML مستقل' : 'Download standalone HTML'}
+                onClick={() => downloadLabAsHtml(snippetHtml, snippetCss, snippetJs, activeLabTitle)}
+                style={{ background: '#0a4', color: '#fff', border: 'none' }}
+              >
+                <i className="fa-solid fa-file-code" /> {lang === 'ar' ? 'تنزيل HTML' : 'HTML'}
+              </button>
+              <button
+                type="button"
+                className="btn-copy"
+                title={lang === 'ar' ? 'تنزيل PDF' : 'Download PDF'}
+                disabled={labPdfBusy}
+                onClick={() => {
+                  setLabPdfBusy(true);
+                  const iframeEl = previewFrame.current;
+                  const liveBody = iframeEl?.contentDocument?.body ?? null;
+                  void downloadLabAsPdf({
+                    element: liveBody,
+                    html: snippetHtml,
+                    css: snippetCss,
+                    js: snippetJs,
+                    title: activeLabTitle,
+                  }).finally(() => setLabPdfBusy(false));
+                }}
+                style={{ background: '#c0392b', color: '#fff', border: 'none', opacity: labPdfBusy ? 0.6 : 1 }}
+              >
+                <i className={`fa-solid ${labPdfBusy ? 'fa-spinner fa-spin' : 'fa-file-pdf'}`} /> {lang === 'ar' ? (labPdfBusy ? 'جاري PDF…' : 'تنزيل PDF') : (labPdfBusy ? 'PDF…' : 'PDF')}
+              </button>
+              <button
+                type="button"
+                className="btn-copy"
+                title={lang === 'ar' ? 'فتح كبرنامج مستقل للتجربة' : 'Open standalone preview'}
+                onClick={() => openLabStandalone(snippetHtml, snippetCss, snippetJs, activeLabTitle)}
+                style={{ background: '#003366', color: '#fff', border: 'none' }}
+              >
+                <i className="fa-solid fa-up-right-from-square" /> {lang === 'ar' ? 'مستقل' : 'Standalone'}
+              </button>
             </div>
           </div>
 
-          {/* Playground Body: editor (left) + preview (right) */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', flex: 1, overflow: 'hidden' }}>
-            {/* Left: Tabbed code editor */}
-            <div style={{ display: 'flex', flexDirection: 'column', borderInlineEnd: '2px solid #222', overflow: 'hidden' }}>
-              {/* Tab bar */}
-              <div style={{ display: 'flex', background: '#181818', borderBottom: '1px solid #222', flexShrink: 0 }}>
-                {(['html', 'css', 'js'] as const).map(tab => (
-                  <button key={tab} onClick={() => setSnippetLangTab(tab)}
-                    style={{ padding: '8px 18px', background: snippetLangTab === tab ? '#111' : 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 12,
-                      color: tab === 'html' ? '#e34f26' : tab === 'css' ? '#1572b6' : '#f7df1e',
-                      borderBottom: snippetLangTab === tab ? '2px solid currentColor' : '2px solid transparent' }}>
-                    <i className={`fa-brands fa-${tab === 'js' ? 'js' : tab === 'html' ? 'html5' : 'css3-alt'}`} style={{ marginInlineEnd: 5 }} />
-                    {tab.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-              {/* Editor */}
-              <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
-                {snippetLangTab === 'html' && (
-                  <textarea className="code-editor" value={snippetHtml} onChange={e => setSnippetHtml(e.target.value)} spellCheck={false} dir="ltr" placeholder="<!-- HTML -->" style={{ flex: 1, borderRadius: 0, background: '#111', color: '#e0e0ff', resize: 'none' }} />
-                )}
-                {snippetLangTab === 'css' && (
-                  <textarea className="code-editor" value={snippetCss} onChange={e => setSnippetCss(e.target.value)} spellCheck={false} dir="ltr" placeholder="/* CSS */" style={{ flex: 1, borderRadius: 0, background: '#111', color: '#b3e0ff', resize: 'none' }} />
-                )}
-                {snippetLangTab === 'js' && (
-                  <textarea className="code-editor" value={snippetJs} onChange={e => setSnippetJs(e.target.value)} spellCheck={false} dir="ltr" placeholder="// JavaScript" style={{ flex: 1, borderRadius: 0, background: '#111', color: '#ffe082', resize: 'none' }} />
-                )}
-              </div>
-            </div>
-
-            {/* Right: Live preview */}
-            <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <div className="lab-preview-topbar" style={{ background: '#181818', flexShrink: 0 }}>
+          <div className="lab-playground-body">
+            <div className="lab-playground-preview">
+              <div className="lab-preview-topbar lab-playground-preview-bar">
                 <span>
                   <i className="fa-solid fa-circle" style={{ color: '#ff5f57', fontSize: 10 }} />{' '}
                   <i className="fa-solid fa-circle" style={{ color: '#febc2e', fontSize: 10 }} />{' '}
                   <i className="fa-solid fa-circle" style={{ color: '#28c840', fontSize: 10 }} />
                 </span>
-                <span style={{ fontSize: 12, color: '#aaa', fontWeight: 700 }}>
+                <span className="lab-playground-preview-label">
                   {lang === 'ar' ? 'معاينة مباشرة' : lang === 'de' ? 'Live-Vorschau' : 'Live Preview'}
                 </span>
+                <div className="lab-playground-preview-tools">
+                  <div className="lab-device-toggle" role="group" aria-label="preview device">
+                    {([
+                      ['auto', lang === 'ar' ? 'تلقائي' : 'Auto', 'fa-wand-magic-sparkles'],
+                      ['desktop', lang === 'ar' ? 'كمبيوتر' : 'Desktop', 'fa-desktop'],
+                      ['mobile', lang === 'ar' ? 'جوال' : 'Mobile', 'fa-mobile-screen'],
+                    ] as const).map(([mode, label, icon]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={`lab-device-btn${labPreviewDevice === mode ? ' active' : ''}`}
+                        onClick={() => setLabPreviewDevice(mode)}
+                        title={label}
+                      >
+                        <i className={`fa-solid ${icon}`} /> <span className="lab-device-btn-text">{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="lab-zoom-controls">
+                    <button type="button" className="lab-zoom-btn" onClick={() => setLabPreviewZoom((z) => Math.max(0.35, +(z - 0.1).toFixed(2)))} aria-label="zoom out">
+                      <i className="fa-solid fa-minus" />
+                    </button>
+                    <span className="lab-zoom-label">{Math.round(labPreviewZoom * 100)}%</span>
+                    <button type="button" className="lab-zoom-btn" onClick={() => setLabPreviewZoom((z) => Math.min(2.5, +(z + 0.1).toFixed(2)))} aria-label="zoom in">
+                      <i className="fa-solid fa-plus" />
+                    </button>
+                    <button type="button" className="lab-zoom-btn" onClick={() => setLabPreviewZoom(1)} aria-label="reset zoom">
+                      <i className="fa-solid fa-compress" />
+                    </button>
+                  </div>
+                </div>
               </div>
-              <iframe ref={previewFrame} className="lab-preview-iframe" title="live-preview" sandbox="allow-scripts allow-same-origin" style={{ flex: 1, border: 'none' }} />
+              <div className="lab-playground-preview-scroll">
+                <div
+                  className={`lab-playground-preview-stage lab-preview-stage--${labEffectiveDevice}`}
+                  style={{ transform: `scale(${labPreviewZoom})` }}
+                >
+                  <div className={`lab-preview-device${labEffectiveDevice === 'mobile' ? ' lab-preview-device--mobile' : ' lab-preview-device--desktop'}`}>
+                    <iframe ref={previewFrame} className="lab-preview-iframe lab-playground-preview-iframe" title="live-preview" sandbox={LAB_IFRAME_SANDBOX} />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className={`lab-playground-code-drawer${labCodePanelOpen ? ' open' : ''}`}>
+              <button
+                type="button"
+                className="lab-code-drawer-toggle"
+                onClick={() => setLabCodePanelOpen((o) => !o)}
+                aria-expanded={labCodePanelOpen}
+              >
+                <i className={`fa-solid fa-chevron-${labCodePanelOpen ? 'down' : 'up'}`} />
+                <span>{lang === 'ar' ? 'الأكواد' : lang === 'de' ? 'Code' : 'Code'}</span>
+                <span className="lab-code-drawer-hint">HTML · CSS · JS</span>
+              </button>
+              {labCodePanelOpen && (
+                <div className="lab-playground-editors">
+                  <div className="lab-playground-tabs">
+                    {(['html', 'css', 'js'] as const).map(tab => (
+                      <button
+                        key={tab}
+                        type="button"
+                        className={`lab-playground-tab${snippetLangTab === tab ? ' active' : ''}`}
+                        data-lang={tab}
+                        onClick={() => setSnippetLangTab(tab)}
+                      >
+                        <i className={`fa-brands fa-${tab === 'js' ? 'js' : tab === 'html' ? 'html5' : 'css3-alt'}`} />
+                        {tab.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="lab-playground-editor-pane">
+                    {snippetLangTab === 'html' && (
+                      <textarea className="code-editor lab-playground-code" value={snippetHtml} onChange={e => setSnippetHtml(e.target.value)} spellCheck={false} dir="ltr" placeholder="<!-- HTML -->" />
+                    )}
+                    {snippetLangTab === 'css' && (
+                      <textarea className="code-editor lab-playground-code lab-playground-code--css" value={snippetCss} onChange={e => setSnippetCss(e.target.value)} spellCheck={false} dir="ltr" placeholder="/* CSS */" />
+                    )}
+                    {snippetLangTab === 'js' && (
+                      <textarea className="code-editor lab-playground-code lab-playground-code--js" value={snippetJs} onChange={e => setSnippetJs(e.target.value)} spellCheck={false} dir="ltr" placeholder="// JavaScript" />
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -3055,10 +4034,10 @@ ${css}
 
                   <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginBottom: 10, lineHeight: 1.5 }}>
                     {lang === 'ar'
-                      ? 'ارفع الأيقونة أو الصق رابط صورة. على الموقع المباشر (Hostinger) يُفضَّل الرفع أو الرابط — الصور المحلية فقط لا تُحفظ على السيرفر.'
+                      ? 'ارفع الأيقونة أو الصق رابط صورة. زر العين يُظهر/يُخفي المهارة في صفحة السيرة. على Hostinger يُفضَّل الرفع بامتداد (png/svg) أو «استرجاع أيقونات البرامج».'
                       : lang === 'de'
-                        ? 'Symbol hochladen oder Bild-URL einfügen. Auf Hostinger Upload oder URL verwenden.'
-                        : 'Upload an icon or paste an image URL. On Hostinger, use upload or URL — local-only images are not stored on the server.'}
+                        ? 'Symbol hochladen oder Bild-URL. Auge = Sichtbarkeit auf der Über-Seite.'
+                        : 'Upload an icon or paste a URL. Eye toggles visibility on the About page. Prefer png/svg uploads or “Restore app icons”.'}
                   </div>
 
                   <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -3128,10 +4107,11 @@ ${css}
                   mode="site"
                   data={data}
                   onSave={handleCvSave}
+                  onSiteApply={handleSiteApply}
+                  onSitePersist={handleSitePersist}
                   serverConnected={serverConnected}
                   serverSyncing={serverSyncing}
                   onServerConnect={handleServerConnect}
-                  onServerSync={handleServerSync}
                   onServerDisconnect={handleServerDisconnect}
                 />
               )}
@@ -3218,12 +4198,7 @@ ${css}
         </div>
       )}
 
-      {/* ── Floating CV Button — admin only ─────────── */}
-      {adminLoggedIn && (
-        <button className="float-cv-btn glass" onClick={() => openPortal("cv")}>
-          <i className="fa-solid fa-print" /> {t.cvFloatBtn}
-        </button>
-      )}
+      {/* ── Floating CV Button removed per admin request ── */}
 
       {/* ── Hidden CV snapshots for about-page PDF (نفس محتوى المعاينة) ─── */}
       {visitorCvDocsForExport(data).length > 0 && (
@@ -3436,7 +4411,7 @@ ${css}
                   bookPreview.driveUrl && (
                     <a href={bookPreview.driveUrl} target="_blank" rel="noreferrer"
                       onClick={() => trackFileDownload(pickML(bookPreview.title, lang as LangKey) || 'book', bookPreview.id)}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--navy)', color: '#fff', borderRadius: 10, padding: '9px 22px', fontWeight: 800, fontSize: 14, textDecoration: 'none' }}>
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--btn-bg, var(--navy))', color: 'var(--btn-text, #fff)', borderRadius: 10, padding: '9px 22px', fontWeight: 800, fontSize: 14, textDecoration: 'none' }}>
                       <i className="fa-solid fa-download" /> {t.downloadBook}
                     </a>
                   )
@@ -3471,7 +4446,10 @@ ${css}
           <button
             key={item.key}
             className={`bottom-nav-item${portal === item.key ? ' active' : ''}`}
-            onClick={() => item.key === 'home' ? goHome() : openPortal(item.key as Portal)}
+            onClick={() => {
+              if (playgroundMode) closeLabPlayground();
+              item.key === 'home' ? goHome() : openPortal(item.key as Portal);
+            }}
             aria-label={item.label}
           >
             <i className={`fa-solid ${item.icon}`} />
@@ -3479,6 +4457,53 @@ ${css}
           </button>
         ))}
       </nav>
+
+      {/* موافقة ناعمة قبل تشغيل نافذة GPS الخاصة بالمتصفح — تظهر في قسم الزراعة فقط */}
+      {gpsConsentOpen && (
+        <div
+          role="dialog"
+          aria-live="polite"
+          style={{
+            position: 'fixed',
+            top: 74,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 10050,
+            width: 'min(92vw, 520px)',
+            padding: '14px 16px',
+            borderRadius: 18,
+            background: 'rgba(0, 18, 42, 0.96)',
+            border: '1px solid rgba(94, 200, 255, 0.35)',
+            boxShadow: '0 18px 48px rgba(0,0,0,0.55)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            textAlign: isRtl ? 'right' : 'left',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <i className="fa-solid fa-seedling" style={{ fontSize: 22, color: 'var(--navy, #5ec8ff)', flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 900, fontSize: 14, color: '#ffffff', lineHeight: 1.55 }}>
+                {lang === 'ar'
+                  ? 'حدد موقعك للتعرف على نباتات منطقتك'
+                  : lang === 'de'
+                    ? 'Standort bestimmen, um Pflanzen Ihrer Region zu erkennen'
+                    : 'Share your location to identify plants in your area'}
+              </div>
+              {gpsConsentError && <div style={{ color: '#ffb4b4', fontSize: 11, marginTop: 4 }}>{gpsConsentError}</div>}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10, justifyContent: isRtl ? 'flex-start' : 'flex-end' }}>
+            <button type="button" className="btn-prime" disabled={gpsConsentBusy} onClick={() => void acceptGpsConsent()} style={{ width: 'auto', minHeight: 34, padding: '7px 14px', fontSize: 12 }}>
+              <i className={`fa-solid ${gpsConsentBusy ? 'fa-spinner fa-spin' : 'fa-location-dot'}`} />
+              {' '}{lang === 'ar' ? 'موافق' : lang === 'de' ? 'Ja' : 'Allow'}
+            </button>
+            <button type="button" className="btn-outline-sm" disabled={gpsConsentBusy} onClick={declineGpsConsent} style={{ minHeight: 34, padding: '7px 14px', fontSize: 12 }}>
+              {lang === 'ar' ? 'لا' : lang === 'de' ? 'Nein' : 'No'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Admin Gate Modal ─────────────────────────── */}
       {adminGate && (

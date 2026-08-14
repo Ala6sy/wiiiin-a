@@ -1,7 +1,7 @@
 <?php
 /**
- * api/img-proxy.php — وسيط صور لحلّ مشكلة CORS مع Google Drive
- * يُستخدم فقط من مولّد غلاف الكتب (Canvas)
+ * api/img-proxy.php — وسيط وسائط لحلّ مشكلة CORS مع Google Drive
+ * صور (Canvas / img) وفيديو WebM من المعرض
  *
  * GET ?url=<encoded_url>
  * - مقيّد بنطاقات Google Drive و Drive thumbnail فقط
@@ -75,13 +75,16 @@ if ($body === false || $status >= 400) {
 }
 
 /* ─── نقلب نوع المحتوى ─── */
-$allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml'];
+$allowedMimes = [
+    'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml',
+    'video/webm', 'video/mp4', 'video/ogg', 'video/quicktime', 'application/octet-stream',
+];
 $cleanMime    = explode(';', $mime)[0]; // strip charset
 if (!in_array($cleanMime, $allowedMimes, true)) {
     // إذا كان Drive يعيد HTML (غير مشارك) — نعيد خطأ
     http_response_code(422);
     header('Content-Type: application/json');
-    die(json_encode(['error' => 'Not an image: ' . $cleanMime]));
+    die(json_encode(['error' => 'Unsupported media type: ' . $cleanMime]));
 }
 
 header('Content-Type: ' . $cleanMime);

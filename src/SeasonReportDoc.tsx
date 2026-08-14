@@ -9,6 +9,7 @@ import type { VisitorGpsLocation } from './visitorLocation';
 import { locationLabel } from './visitorLocation';
 import type { PlantAiAnswer } from './seasonPlantAi';
 import { SeasonPlantsUnifiedTable } from './SeasonPlantsUnifiedTable';
+import { resolveImageSrc } from './mediaUrl';
 
 const FALLBACK_GREEN = '#2a7a2a';
 
@@ -91,11 +92,11 @@ export function SeasonReportDoc({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `3px solid ${theme}`, paddingBottom: 14, marginBottom: 18, gap: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
           {tpl?.headerLogo
-            ? <img src={tpl.headerLogo} alt="logo" style={{ height: 58, objectFit: 'contain' }} />
+            ? <img className="plant-report-header-logo" src={resolveImageSrc(tpl.headerLogo)} alt="logo" style={{ height: 58, objectFit: 'contain' }} />
             : st?.logoType === 'svg_alaa' || (!st?.logoType && !st?.logoImg)
-              ? <AlaaLogo color={engNameColor} size={58} />
+              ? <AlaaLogo className="plant-report-alaa-logo" color={engNameColor} size={58} />
               : st?.logoType === 'image' && st?.logoImg
-                ? <img src={st.logoImg} alt="logo" style={{ height: 58, objectFit: 'contain' }} />
+                ? <img className="plant-report-header-logo" src={st.logoImg} alt="logo" style={{ height: 58, objectFit: 'contain' }} />
                 : <div style={{ fontWeight: 900, color: engNameColor, fontSize: 22 }}>{pickML(st?.logoText, lang) || 'م. علاء'}</div>}
           <div>
             <div style={{ fontWeight: 800, color: engNameColor, fontSize: 14, lineHeight: 1.3 }}>{engNameDisplay}</div>
@@ -174,13 +175,13 @@ export function SeasonReportDoc({
           <div style={{ display: 'flex', gap: 30, alignItems: 'flex-end' }}>
             <div style={{ textAlign: 'center', minWidth: 130 }}>
               {tpl?.engSignature
-                ? <img src={tpl.engSignature} alt="" style={{ maxHeight: 64, maxWidth: 150, objectFit: 'contain' }} />
+                ? <img src={resolveImageSrc(tpl.engSignature)} alt="" style={{ maxHeight: 64, maxWidth: 150, objectFit: 'contain' }} />
                 : <div style={{ height: 64 }} />}
               <div style={{ borderTop: '1px solid #999', marginTop: 4, paddingTop: 5, fontSize: 11, fontWeight: 700, color: '#444' }}>{L(LBL.engSignature)}</div>
             </div>
             {tpl?.engStamp && (
               <div style={{ textAlign: 'center' }}>
-                <img src={tpl.engStamp} alt="" style={{ maxHeight: 84, maxWidth: 120, objectFit: 'contain' }} />
+                <img src={resolveImageSrc(tpl.engStamp)} alt="" style={{ maxHeight: 84, maxWidth: 120, objectFit: 'contain' }} />
               </div>
             )}
           </div>

@@ -90,137 +90,150 @@ function lockSheetSize(sheet: HTMLElement, widthPx: number, heightPx: number): v
   sheet.style.setProperty('box-sizing', 'border-box', 'important');
 }
 
+const SKILL_PDF_TEXT_LIFT_PX = -5;
+
+function parseCssPx(value: string, fallback: number): number {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function wrapSkillTextForPdfLift(el: HTMLElement, doc: Document): void {
+  if (el.querySelector(':scope > .cv-h2c-lift')) return;
+
+  const lift = doc.createElement('span');
+  lift.className = 'cv-h2c-lift';
+  lift.textContent = el.textContent ?? '';
+  lift.style.cssText = [
+    'display:inline-block',
+    'position:relative',
+    `top:${SKILL_PDF_TEXT_LIFT_PX}px`,
+    'line-height:inherit',
+    'white-space:nowrap',
+  ].join(';');
+
+  el.textContent = '';
+  el.appendChild(lift);
+}
+
 /**
  * إصلاح تخطيط المهارات لـ html2canvas.
  *
- * مشكلتان معروفتان في html2canvas 1.4.1:
- *   1. يتجاهل `gap` على flex وgrid.
- *   2. قد لا يُطبّق `align-items:center` بشكل صحيح على inline-flex.
+ * السبب الجذري لانزلاق اسم التطبيق فوق الشريط في PDF:
+ *   html2canvas 1.4.1 يتجاهل flex-direction:column على .cv-skill-bar-row
+ *   فيضع سطر الاسم والشريط على نفس المحور الأفقي → تداخل النص مع الشريط.
  *
- * الحل للمحاذاة العمودية (اسم البرنامج والأيقونة):
- *   نحوّل .cv-skill-bar-name-chip إلى inline-table.
- *   الخلايا table-cell + vertical-align:middle مضمونة في html2canvas.
- *
- * الحل لـ gap:
- *   نُبقي flex-column على .cv-skill-bar-row ونستبدل gap بـ margin صريحة.
+ * الحل: تجنّب flex للصف بالكامل — block + table-cell مضمونان في html2canvas.
+ * رفع النص ثابتاً لأن html2canvas يُنزّل baseline الخط بينما الأيقونة تبقى للأعلى.
  */
 function applySkillLayoutForCapture(root: ParentNode, vars: SkillLayoutVars): void {
   const iconPx = vars.iconSize || '14px';
-  const iconSizeNum = parseFloat(iconPx) || 14;
+  const iconNum = parseCssPx(iconPx, 14);
+  const headerGapNum = parseCssPx(vars.headerBarGap, 10);
+  const spacerHeightPx = headerGapNum + 4;
+  const doc = root instanceof Document ? root : root.ownerDocument ?? document;
 
-  /*
-   * ─── Row: flex-column، gap=0، margin-bottom للمسافة بين الصفوف ────────────
-   *
-   * المشكلة السابقة: وضعنا margin-bottom على .cv-skill-bar-line لإنشاء فراغ
-   * بينه وبين الشريط. لكن CSS لديه margin:0!important على .cv-skill-bar-line
-   * وهذا أدى إلى صراع مع html2canvas وجعل السطر يظهر في الأسفل.
-   *
-   * الحل الجذري: بدل margin → نُدرج عنصر <div> فاصل صريح (spacer) بين
-   * سطر الاسم والشريط. عنصر DOM حقيقي بارتفاع ثابت — لا صراع CSS مطلقاً.
-   */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-row').forEach(row => {
-    row.style.setProperty('display', 'flex', 'important');
-    row.style.setProperty('flex-direction', 'column', 'important');
-    row.style.setProperty('gap', '0', 'important');
+    row.style.setProperty('display', 'block', 'important');
+    row.style.setProperty('width', '100%', 'important');
+    row.style.setProperty('margin', '0', 'important');
+    row.style.setProperty('padding', '0', 'important');
     row.style.setProperty('margin-bottom', vars.rowGap, 'important');
 
-    /* أدرج spacer بين سطر الاسم والشريط إن لم يكن موجوداً */
-    if (!row.querySelector('.cv-h2c-spacer')) {
-      const line = row.querySelector<HTMLElement>('.cv-skill-bar-line, .cv-skill-bar-header');
-      const track = row.querySelector<HTMLElement>('.cv-skill-bar-track');
-      if (line && track) {
-        const spacer = (root instanceof Document ? root : row.ownerDocument!).createElement('div');
-        spacer.className = 'cv-h2c-spacer';
-        spacer.style.cssText = [
-          'display:block',
-          `height:${vars.headerBarGap}`,
-          'width:100%',
-          'flex-shrink:0',
-          'margin:0',
-          'padding:0',
-          'border:none',
-          'background:transparent',
-          'pointer-events:none',
-        ].join('!important;') + '!important';
-        row.insertBefore(spacer, track);
-      }
+    const line = row.querySelector<HTMLElement>('.cv-skill-bar-line, .cv-skill-bar-header');
+    const track = row.querySelector<HTMLElement>('.cv-skill-bar-track');
+    if (!line || !track) return;
+
+    let spacer = row.querySelector<HTMLElement>('.cv-h2c-spacer');
+    if (!spacer) {
+      spacer = doc.createElement('div');
+      spacer.className = 'cv-h2c-spacer';
+      spacer.setAttribute('aria-hidden', 'true');
+      row.insertBefore(spacer, track);
     }
+    spacer.style.cssText = [
+      'display:block',
+      `height:${spacerHeightPx}px`,
+      'width:100%',
+      'margin:0',
+      'padding:0',
+      'border:none',
+      'background:transparent',
+      'pointer-events:none',
+      'overflow:hidden',
+      'line-height:0',
+      'font-size:0',
+    ].join(';');
   });
 
-  /* ─── سطر الاسم: flex-row، لا margin — الفراغ يأتي من spacer ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-line, .cv-skill-bar-header').forEach(line => {
-    line.style.setProperty('display', 'flex', 'important');
-    line.style.setProperty('flex-direction', 'row', 'important');
-    line.style.setProperty('align-items', 'center', 'important');
-    line.style.setProperty('justify-content', 'space-between', 'important');
+    line.style.setProperty('display', 'table', 'important');
+    line.style.setProperty('table-layout', 'fixed', 'important');
     line.style.setProperty('width', '100%', 'important');
-    line.style.setProperty('min-height', vars.nameLineHeight, 'important');
-    line.style.setProperty('gap', '0', 'important');
+    line.style.setProperty('border-collapse', 'collapse', 'important');
+    line.style.setProperty('height', `${iconNum}px`, 'important');
+    line.style.setProperty('min-height', `${iconNum}px`, 'important');
+    line.style.setProperty('max-height', `${iconNum}px`, 'important');
+    line.style.setProperty('overflow', 'visible', 'important');
     line.style.setProperty('margin', '0', 'important');
     line.style.setProperty('padding', '0', 'important');
+
+    const pct = line.querySelector<HTMLElement>('.cv-skill-bar-pct');
+    if (pct) {
+      wrapSkillTextForPdfLift(pct, doc);
+      pct.style.setProperty('display', 'table-cell', 'important');
+      pct.style.setProperty('vertical-align', 'top', 'important');
+      pct.style.setProperty('width', '1%', 'important');
+      pct.style.setProperty('white-space', 'nowrap', 'important');
+      pct.style.setProperty('line-height', `${iconNum}px`, 'important');
+      pct.style.setProperty('padding', '0', 'important');
+    }
+
+    line.querySelectorAll<HTMLElement>('.cv-skill-bar-name-chip, .cv-skill-bar-name').forEach(chip => {
+      chip.style.setProperty('display', 'table-cell', 'important');
+      chip.style.setProperty('vertical-align', 'top', 'important');
+      chip.style.setProperty('text-align', 'right', 'important');
+      chip.style.setProperty('width', '99%', 'important');
+      chip.style.setProperty('height', `${iconNum}px`, 'important');
+      chip.style.setProperty('white-space', 'nowrap', 'important');
+      chip.style.setProperty('direction', 'ltr', 'important');
+      chip.style.setProperty('line-height', `${iconNum}px`, 'important');
+      chip.style.setProperty('padding', '0', 'important');
+    });
   });
 
-  /*
-   * ─── Chip: إصلاح المحاذاة العمودية بدون تغيير display ────────────────
-   *
-   * السبب الجذري:
-   *   html2canvas قد يُعالج inline-flex كـ inline عادي.
-   *   الأيقونة لها vertical-align:middle (من CSS) لكن النص له
-   *   vertical-align:baseline (الافتراضي) → النص ينزل أسفل الأيقونة.
-   *
-   * الحل الجذري المضمون:
-   *   نجعل النص ونفس ارتفاع الأيقونة متساويين: height = line-height = iconPx.
-   *   بذلك كلاهما 14px، وكلاهما vertical-align:middle → يتمحوران بالضبط
-   *   في نفس النقطة بغض النظر عن هل html2canvas يُطبّق flex أم inline.
-   *
-   *   لماذا لا نستخدم inline-table:
-   *   inline-table في سياق flex يُصبح block-table، مما يُكسر
-   *   margin-bottom على سطر الاسم ويُزيل الفراغ بينه وبين الشريط.
-   */
-  root.querySelectorAll<HTMLElement>('.cv-skill-bar-name-chip, .cv-skill-bar-name').forEach(chip => {
-    chip.style.setProperty('display', 'inline-flex', 'important');
-    chip.style.setProperty('flex-direction', 'row', 'important');
-    chip.style.setProperty('align-items', 'center', 'important');
-    chip.style.setProperty('direction', 'ltr', 'important');
-    chip.style.setProperty('gap', '0', 'important');
-    chip.style.setProperty('vertical-align', 'middle', 'important');
-  });
-
-  /*
-   * النص: نفس ارتفاع الأيقونة + line-height مطابق → يتمحور النص داخله.
-   * كلاهما vertical-align:middle → يتمحوران عند نفس خط x-height.
-   * margin-inline-end / margin-right بديل gap داخل الـ chip.
-   */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-name-text').forEach(txt => {
+    wrapSkillTextForPdfLift(txt, doc);
     txt.style.setProperty('display', 'inline-block', 'important');
-    txt.style.setProperty('vertical-align', 'middle', 'important');
-    txt.style.setProperty('height', iconPx, 'important');
-    txt.style.setProperty('line-height', iconPx, 'important');
-    txt.style.setProperty('overflow', 'hidden', 'important');
+    txt.style.setProperty('vertical-align', 'top', 'important');
+    txt.style.setProperty('line-height', `${iconNum}px`, 'important');
     txt.style.setProperty('white-space', 'nowrap', 'important');
     txt.style.setProperty('margin-inline-end', vars.iconNameGap, 'important');
     txt.style.setProperty('margin-right', vars.iconNameGap, 'important');
   });
 
-  /* ─── الشريط: block صريح ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-bar-track').forEach(track => {
     track.style.setProperty('display', 'block', 'important');
     track.style.setProperty('width', '100%', 'important');
-    track.style.setProperty('margin-top', '0', 'important');
+    track.style.setProperty('margin', '0', 'important');
+    track.style.setProperty('padding', '0', 'important');
+    track.style.setProperty('box-sizing', 'border-box', 'important');
     track.style.setProperty('clear', 'both', 'important');
   });
 
-  /* ─── الأيقونات خارج الـ chip (نادرة): ثبّت الحجم ─── */
   root.querySelectorAll<HTMLElement>('.cv-skill-icon').forEach(icon => {
-    /* لا نُعيد تحديد display هنا — ضُبطت بالفعل من خلال chip.querySelectorAll أعلاه */
+    icon.style.setProperty('display', 'inline-block', 'important');
+    icon.style.setProperty('vertical-align', 'top', 'important');
     icon.style.setProperty('width', iconPx, 'important');
     icon.style.setProperty('height', iconPx, 'important');
     icon.style.setProperty('max-width', 'none', 'important');
     icon.style.setProperty('max-height', 'none', 'important');
     icon.style.setProperty('min-width', iconPx, 'important');
     icon.style.setProperty('min-height', iconPx, 'important');
-    icon.style.setProperty('flex-shrink', '0', 'important');
     icon.style.setProperty('object-fit', 'contain', 'important');
+    icon.style.setProperty('margin', '0', 'important');
+    icon.style.setProperty('padding', '0', 'important');
+    icon.style.setProperty('position', 'relative', 'important');
+    icon.style.setProperty('top', '0', 'important');
   });
 }
 

@@ -47,6 +47,23 @@ export function getDefaultSkillIconForName(name: string): string {
   return '';
 }
 
+/**
+ * هل مسار الأيقونة المخصص موثوق للعرض؟
+ * مسارات مثل `/uploads/skills/6` بدون امتداد غالباً تالفة/غير معرّفة MIME فتظهر مشوّهة.
+ */
+export function isReliableCustomSkillIcon(icon: string): boolean {
+  const v = normalizeSkillIconField((icon || '').trim());
+  if (!v) return false;
+  if (v.startsWith('data:image/') || v.startsWith('blob:')) return true;
+  if (/cdn\.simpleicons\.org/i.test(v)) return true;
+  if (/\.(svg|png|jpe?g|webp|gif|ico|avif)(\?|#|$)/i.test(v)) return true;
+  // مسارات الرفع من لوحة التحكم
+  if (/^\/?uploads\//i.test(v)) return true;
+  // رابط خارجي (ليست ملفات رفع بدون امتداد)
+  if (/^https?:\/\//i.test(v) && !/\/uploads\//i.test(v)) return true;
+  return false;
+}
+
 /** توحيد مسار الرفع — skill→skills، رابط مطلق→نسبي */
 export function normalizeSkillIconField(icon: string): string {
   const v = (icon || '').trim();
