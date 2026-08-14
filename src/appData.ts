@@ -2368,9 +2368,11 @@ export async function loadAppDataFromDb(): Promise<AppData | null> {
       }
     }
     /* إعدادات الشبكة: لا نستبدل بقيمة null من DB إن وُجدت محلياً */
+    const dbRec = dbData as unknown as Record<string, unknown>;
+    const localRec = local as unknown as Record<string, unknown>;
     for (const k of ['bookGridSettings', 'articleGridSettings', 'gfxGridSettings', 'webGridSettings', 'agriCvPlacements', 'designCvPlacements'] as const) {
-      if ((dbData as Record<string, unknown>)[k] == null && (local as Record<string, unknown>)[k] != null) {
-        merged[k] = (local as Record<string, unknown>)[k];
+      if (dbRec[k] == null && localRec[k] != null) {
+        merged[k] = localRec[k];
       }
     }
     if (dbData.reportTemplate && local.reportTemplate) {
@@ -2391,7 +2393,6 @@ export async function loadAppDataFromDb(): Promise<AppData | null> {
       };
     }
     const mergedStr = JSON.stringify(merged);
-    const src = JSON.parse(mergedStr) as Partial<AppData> & Record<string, unknown>;
 
     /* نحفظ محلياً لتسريع التحميل في المرة القادمة */
     try { localStorage.setItem(STORAGE_KEY, mergedStr); } catch { /* */ }
