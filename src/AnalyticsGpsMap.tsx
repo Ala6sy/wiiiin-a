@@ -9,7 +9,7 @@ export type GpsMapVisitor = VisitorRow & {
   gpsAccuracy?: string | null;
 };
 
-type GpsPin = GpsMapVisitor & { lat: number; lon: number };
+type GpsPin = Omit<GpsMapVisitor, 'lat' | 'lon'> & { lat: number; lon: number };
 
 function loadStyle(href: string) {
   if (document.querySelector(`link[href="${href}"]`)) return;

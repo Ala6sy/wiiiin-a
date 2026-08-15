@@ -8,9 +8,9 @@ const btnStyle: React.CSSProperties = {
   gap: 5,
   padding: '4px 10px',
   borderRadius: 6,
-  border: '1px solid #7eb8ff',
-  background: 'linear-gradient(135deg, #e8f2ff, #d4e8ff)',
-  color: '#003366',
+  border: '1px solid #4f86b5',
+  background: '#0b2944',
+  color: '#ffffff',
   fontSize: 11,
   fontWeight: 700,
   cursor: 'pointer',
@@ -20,9 +20,9 @@ const btnStyle: React.CSSProperties = {
 
 const btnDarkStyle: React.CSSProperties = {
   ...btnStyle,
-  border: '1px solid rgba(120,200,120,0.5)',
-  background: 'rgba(80,160,80,0.2)',
-  color: '#b8f0b8',
+  border: '1px solid rgba(120,200,120,0.65)',
+  background: '#153925',
+  color: '#ffffff',
 };
 
 /** زر ترجمة نص عربي واحد */
@@ -61,7 +61,7 @@ export function MlTranslateButton({
 
   return (
     <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
-      <button type="button" disabled={disabled || loading || !arabic.trim()} onClick={run}
+      <button type="button" className="ml-translate-btn" disabled={disabled || loading || !arabic.trim()} onClick={run}
         style={{ ...dark ? btnDarkStyle : btnStyle, fontSize: small ? 10 : 11, padding: small ? '3px 8px' : btnStyle.padding, opacity: loading ? 0.7 : 1 }}
         title="يملأ الإنجليزية والألمانية من العربية — يمكنك التعديل بعدها">
         <i className={`fa-solid ${loading ? 'fa-spinner fa-spin' : 'fa-language'}`} />
@@ -105,6 +105,7 @@ export function MlFieldsTranslateButton({
   onFieldTranslated,
   label = 'ترجمة الكل من العربية',
   dark,
+  small,
   htmlKeys,
   context,
 }: {
@@ -112,6 +113,7 @@ export function MlFieldsTranslateButton({
   onFieldTranslated: (key: string, tr: { en: string; de: string }) => void;
   label?: string;
   dark?: boolean;
+  small?: boolean;
   htmlKeys?: string[];
   context?: string;
 }) {
@@ -137,8 +139,8 @@ export function MlFieldsTranslateButton({
 
   return (
     <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
-      <button type="button" disabled={loading || !Object.keys(arFields).length} onClick={run}
-        style={{ ...(dark ? btnDarkStyle : btnStyle), opacity: loading ? 0.7 : 1 }}
+      <button type="button" className="ml-translate-btn" disabled={loading || !Object.keys(arFields).length} onClick={run}
+        style={{ ...(dark ? btnDarkStyle : btnStyle), fontSize: small ? 10 : 11, padding: small ? '3px 8px' : btnStyle.padding, opacity: loading ? 0.7 : 1 }}
         title="يملأ EN و DE من العربية لجميع الحقول">
         <i className={`fa-solid ${loading ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'}`} />
         {loading ? 'جاري الترجمة...' : label}
@@ -199,7 +201,7 @@ export function MlBulkTranslateButton({
 
   return (
     <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
-      <button type="button" disabled={loading || count === 0} onClick={run} style={{ ...bulkStyle, opacity: loading ? 0.75 : 1 }}
+      <button type="button" className="ml-translate-btn" disabled={loading || count === 0} onClick={run} style={{ ...bulkStyle, opacity: loading ? 0.75 : 1 }}
         title="يترجم كل النصوص العربية ويملأ خانات EN و DE">
         <i className={`fa-solid ${loading ? 'fa-spinner fa-spin' : 'fa-globe'}`} />
         {loading ? `جاري الترجمة ${progress ? `(${progress})` : '...'}` : label}

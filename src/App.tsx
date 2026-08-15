@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } fr
 import { createPortal } from "react-dom";
 import { LangCode, translations, T } from "./translations";
 import { HeroNameDisplay } from "./HeroNameDisplay";
+import { HomeAgriWalkthrough } from "./AgriWalkthrough";
 import { readLogoFile } from "./logoUtils";
 import {
   AppData,
@@ -50,7 +51,7 @@ import {
   cvDocLabel,
   CV_BTN_ICON_COLOR,
 } from "./appData";
-import { resolveImageSrc, resolveVideoEmbedSrc, normalizeImageUrlForStorage, resolveAboutHeroMedia, extractDriveFileId, DEFAULT_ABOUT_HERO, resolveVideoPlaybackSrc, isGoogleDriveUrl, isVideoMediaUrl, normalizeVideoUrlForStorage } from "./mediaUrl";
+import { resolveImageSrc, resolveVideoEmbedSrc, normalizeImageUrlForStorage, resolveAboutHeroMedia, extractDriveFileId, DEFAULT_ABOUT_HERO, resolveVideoPlaybackSrc, isGoogleDriveUrl, isVideoMediaUrl } from "./mediaUrl";
 import { normalizeExternalUrl, isUsableProjectLink, webProjThumbStyle, webProjImgFit } from "./webProjectUtils";
 import { getGfxMediaSlides, getGfxProjectSlides, gfxModelAsMain, gfxItemModelUrl, gfx3dPreviewActive } from "./gfxMedia";
 import { GfxMediaSlide } from "./GfxMediaSlide";
@@ -138,7 +139,7 @@ import {
 declare global {
   interface Window {
     THREE: any;
-    html2pdf: any;
+    html2pdf?: any;
   }
 }
 
@@ -297,13 +298,12 @@ interface SortableSkillItemProps {
   index: number;
   total: number;
   lang: LangCode;
-  globalSkillSize: number;
   onChange: (id: string, patch: Partial<Skill>) => void;
   onDelete: (id: string) => void;
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
 }
-function SortableSkillItem({ skill: s, index: i, total, lang, globalSkillSize, onChange, onDelete, onMoveUp, onMoveDown }: SortableSkillItemProps) {
+function SortableSkillItem({ skill: s, index: i, total, lang, onChange, onDelete, onMoveUp, onMoveDown }: SortableSkillItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: s.id });
   const [iconUploading, setIconUploading] = useState(false);
   const [iconUrlDraft, setIconUrlDraft] = useState('');
@@ -455,7 +455,6 @@ export default function App() {
   const [data, setData] = useState<AppData>(loadAppData);
   const dataRef = useRef(data);
   useEffect(() => { dataRef.current = data; }, [data]);
-  const [activeSkill, setActiveSkill] = useState<string | null>(null);
   const [agriTab, setAgriTab] = useState(() => {
     if (initialNav?.agriTabKey) {
       return agriTabKeyToIndex(initialNav.agriTabKey, !!loadAppData().aiDiagnosticsEnabled);
@@ -480,8 +479,6 @@ export default function App() {
   } | null>(null);
   const [printingCv, setPrintingCv] = useState(false);
   const [cvLangPickerDoc, setCvLangPickerDoc] = useState<CvDoc | null>(null);
-  const [openPrompt, setOpenPrompt] = useState<number | null>(null);
-
   // GFX 3-tier & full-page project view
   const [gfxSelCatId, setGfxSelCatId] = useState<string>(initialNav?.gfxSelCatId ?? "");
   const [gfxSelSubId, setGfxSelSubId] = useState<string>(initialNav?.gfxSelSubId ?? "");
@@ -808,7 +805,6 @@ export default function App() {
 
   const goHome = useCallback(() => {
     setPortal("home");
-    setActiveSkill(null);
   }, []);
 
   /* ── Navigation persistence: refresh + browser back ── */
@@ -965,10 +961,6 @@ export default function App() {
       window.prompt(lang === 'ar' ? 'انسخ الرابط:' : 'Copy link:', url);
     }
   }, [lang]);
-
-  const filteredGfx = activeSkill
-    ? data.gfxGallery.filter((g) => g.apps.includes(activeSkill))
-    : data.gfxGallery;
 
   /* ── Lab helpers ─────────────────────────────────── */
   function buildThumbSrc(html: string, css: string) {
@@ -1164,24 +1156,6 @@ ${css}
     setCvLangPickerDoc(doc);
   }
 
-  function resolveLiveCvPreview(
-    docId: string,
-    exLang: LangKey,
-    previewEl?: HTMLElement | null,
-  ): HTMLElement | null {
-    if (previewEl?.querySelector('.cv-a4-sheet')) return previewEl;
-
-    if (exLang === cvLang) {
-      const snap = aboutCvSnapRefs.current[docId];
-      if (snap?.querySelector('.cv-a4-sheet')) return snap;
-
-      const portal = cvPortalPreviewRef.current;
-      if (portal?.querySelector('.cv-a4-sheet') && cvDocId === docId) return portal;
-    }
-
-    return null;
-  }
-
   async function mountCvForPrint(
     docToPrint: CvDoc,
     exLang: LangKey,
@@ -1205,7 +1179,7 @@ ${css}
     throw new Error('CV print mount timeout');
   }
 
-  async function printCvDoc(doc: CvDoc, exLang: LangKey, previewEl?: HTMLElement | null, _previewLang?: LangKey) {
+  async function printCvDoc(doc: CvDoc, exLang: LangKey, _previewEl?: HTMLElement | null, _previewLang?: LangKey) {
     if (printingCv) return;
     setPrintingCv(true);
 
@@ -1576,6 +1550,7 @@ ${css}
 
       {/* ── Hero ───────────────────────────────────── */}
       {portal === "home" && (
+        <>
         <main className="hero fade-up">
           {/* Tagline above name */}
           <div className="hero-eyebrow">
@@ -1612,8 +1587,12 @@ ${css}
             <span className="hero-divider-dot" />
           </div>
 
-          {/* Bio */}
-          <p className="hero-bio">{displayML(data.bio, cvLang)}</p>
+          {/* جوال الجولة يحل مكان النص التعريفي عند تفعيله */}
+          {data.agriWalkthrough?.enabled !== false ? (
+            <HomeAgriWalkthrough data={data} lang={lang as LangKey} variant="hero" />
+          ) : (
+            <p className="hero-bio">{displayML(data.bio, cvLang)}</p>
+          )}
 
           {/* Social links — dynamic from siteSettings, fallback to hardcoded */}
           <div className="social-row">
@@ -1696,6 +1675,7 @@ ${css}
             <i className="fa-solid fa-chevron-down" />
           </div>
         </main>
+        </>
       )}
 
       {/* ── About Page ─────────────────────────────── */}
@@ -3667,6 +3647,7 @@ ${css}
                 [t.adminSkillsPanel, 'fa-chart-bar'],
                 [t.adminCvPanel, 'fa-file-lines'],
                 [lang === 'ar' ? 'محتوى الزراعة' : lang === 'de' ? 'Landwirtschaft' : 'Agriculture', 'fa-seedling'],
+                [lang === 'ar' ? 'صفحة الجولة على الموقع' : lang === 'de' ? 'Website-Tour' : 'Website Tour', 'fa-mobile-screen-button'],
                 [lang === 'ar' ? 'معرض التصاميم' : lang === 'de' ? 'Design-Galerie' : 'Design Gallery', 'fa-bezier-curve'],
                 [lang === 'ar' ? 'المشاريع البرمجية' : lang === 'de' ? 'Web-Entwicklung' : 'Web Dev', 'fa-code'],
                 [t.adminInjectPanel, 'fa-file-code'],
@@ -3685,7 +3666,7 @@ ${css}
               ))}
             </aside>
 
-            <main className="glass admin-main">
+            <main className="glass admin-main admin-dark-theme">
               {adminPanel === 0 && (
                 <>
                   <h4>{t.adminBioPanel}</h4>
@@ -4053,7 +4034,6 @@ ${css}
                           index={i}
                           total={editSkills.length}
                           lang={lang}
-                          globalSkillSize={globalSkillSize}
                           onChange={handleSkillChange}
                           onDelete={(id) => saveSkillsImmediate(editSkills.filter(x => x.id !== id))}
                           onMoveUp={handleSkillMoveUp}
@@ -4095,14 +4075,18 @@ ${css}
               )}
 
               {adminPanel === 4 && (
-                <ContentAdmin mode="gfx" data={data} onSave={handleCvSave} />
+                <ContentAdmin mode="tour" data={data} onSave={handleCvSave} />
               )}
 
               {adminPanel === 5 && (
+                <ContentAdmin mode="gfx" data={data} onSave={handleCvSave} />
+              )}
+
+              {adminPanel === 6 && (
                 <ContentAdmin mode="lab" data={data} onSave={handleCvSave} />
               )}
 
-              {adminPanel === 7 && (
+              {adminPanel === 8 && (
                 <ContentAdmin
                   mode="site"
                   data={data}
@@ -4116,15 +4100,15 @@ ${css}
                 />
               )}
 
-              {adminPanel === 8 && (
+              {adminPanel === 9 && (
                 <FileExplorerAdmin data={data} onSave={handleCvSave} />
               )}
 
-              {adminPanel === 9 && (
+              {adminPanel === 10 && (
                 <AnalyticsDashboard lang={lang as 'ar' | 'en' | 'de'} />
               )}
 
-              {adminPanel === 6 && (
+              {adminPanel === 7 && (
                 <>
                   <h4>{t.adminInjectTitle}</h4>
                   <div className="form-group">

@@ -774,7 +774,7 @@ export function AnalyticsDashboard({ lang }: { lang: 'ar' | 'en' | 'de' }) {
         </div>
       )}
 
-      {(view === 'summary' || view === 'downloads') && (stats?.cvDownloadsDetail?.length ?? 0) > 0 && view !== 'reports' && (
+      {(view === 'summary' || view === 'downloads') && (stats?.cvDownloadsDetail?.length ?? 0) > 0 && (
         <div style={{ marginTop: 18 }}>
           <h5 className="analytics-block-title">
             <i className="fa-solid fa-file-pdf" style={{ marginInlineEnd: 6 }} />

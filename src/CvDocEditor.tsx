@@ -3,7 +3,7 @@ import {
   AppData, CvDoc, CvSection, CvSectionKind, CvEntryItem, CvContactItem,
   CvPortfolioItem, CvSidebarDoc, CvQrCredential, ML, LangKey, ml, pickML,
   GfxCategory, GfxProjectItem, Skill, uploadMediaFile, getApiToken, cvDocLabel,
-  CvEditTarget, normCvTypography, CvTypography, mergeCvTypography,
+  CvEditTarget, CvTypography, mergeCvTypography,
   CV_WEIGHT_OPTIONS, CV_TYPO_PX_MIN, CV_TYPO_PX_MAX, CvFontWeight, ensureML,
   CvHeaderStyle,
 } from './appData';
@@ -760,11 +760,10 @@ function PortfolioRowComp({ item, lang, onChange, onDelete, onUp, onDown, isFirs
 }
 
 /* ── Image Picker Modal ──────────────────────────────────── */
-function ImagePickerModal({ gfxCategories, skills, existing, lang, onAdd, onClose }: {
+function ImagePickerModal({ gfxCategories, skills, existing, onAdd, onClose }: {
   gfxCategories: GfxCategory[];
   skills: Skill[];
   existing: string[];
-  lang: LangKey;
   onAdd: (item: CvPortfolioItem) => void;
   onClose: () => void;
 }) {
@@ -1017,7 +1016,6 @@ function PortfolioSectionEditor({ sec, lang, onChange, gfxCategories, skills }: 
           gfxCategories={gfxCategories}
           skills={skills}
           existing={existingGfxIds}
-          lang={lang}
           onAdd={p => updItems([...items, p])}
           onClose={() => setShowPicker(false)}
         />
@@ -1446,7 +1444,7 @@ function CvPreviewDock({
 }: {
   doc: CvDoc; previewLang: LangKey; name: string; skills: Skill[];
   onExport: () => void;
-  previewPageRef: RefObject<HTMLDivElement | null>;
+  previewPageRef: RefObject<HTMLDivElement>;
   onEditTarget?: (t: CvEditTarget) => void;
   viewKey: string;
   onPageCount?: (n: number) => void;

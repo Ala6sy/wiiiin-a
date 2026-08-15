@@ -1,5 +1,5 @@
 ﻿import { exportLibsReady, getHtml2Canvas, getJsPDFCtor } from './pdfCaptureLibs';
-import { mountExportCaptureShell, prepareSheetForCapture, reflowCvSheetFooterForCapture } from './cvExportCapture';
+import { prepareSheetForCapture, reflowCvSheetFooterForCapture } from './cvExportCapture';
 
 export { exportLibsReady } from './pdfCaptureLibs';
 

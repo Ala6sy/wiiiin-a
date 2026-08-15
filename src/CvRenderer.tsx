@@ -1,6 +1,6 @@
 import type { CSSProperties, KeyboardEvent, MouseEvent } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CvDoc, CvEditTarget, CvFooterLayout, CvQrCredential, CvSection, CvTypography, LangKey, mergeCvTypography, ml, pickML, resolveCvEntryAlign, Skill, cvTypographyVars } from './appData';
+import { CvDoc, CvEditTarget, CvFooterLayout, CvQrCredential, CvSection, CvTypography, LangKey, mergeCvTypography, ml, pickML, resolveCvEntryAlign, Skill, cvTypographyVars, type ML } from './appData';
 import { resolvePageBands, type ResolvedPageBands } from './cvPageBands';
 import { baseCvTypography, scaleCvTypography, shouldCompressCvForLang, CV_LANG_FIT_MIN } from './cvLangFit';
 import { CV_EXPORT_PX, cvLayout } from './cvPdfExport';
@@ -129,7 +129,7 @@ function CvSectionTitle({
 }
 
 function CvDocumentsGrid({
-  items, cols, lang, accent,
+  items, cols, lang,
 }: {
   items: CvQrCredential[]; cols: number; lang: LangKey; accent: string;
 }) {

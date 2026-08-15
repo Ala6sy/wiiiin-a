@@ -32,7 +32,7 @@ function findSweepGradient(host: HTMLElement, gradEsc: string): SVGLinearGradien
   if (isGradEl(byId)) return byId;
 
   const ns = svg.getElementsByTagNameNS('http://www.w3.org/2000/svg', 'linearGradient');
-  if (ns.length > 0) return ns[0];
+  if (ns.length > 0) return ns[0] as SVGLinearGradientElement;
 
   const any = svg.querySelector('linearGradient');
   return isGradEl(any) ? any : null;

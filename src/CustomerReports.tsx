@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { AppData, CustomerReport, CustomerReportRow, ReportType, ML, ml, pickML, pickReportML, LangKey, soilRowName } from './appData';
 import { resolveImageSrc } from './mediaUrl';
 import { AlaaLogo } from './AlaaLogo';
@@ -69,8 +69,6 @@ export function CustomerReportDoc({ data, report, lang, innerRef, forExport, flu
   const engNameDisplay = pickML(tpl.engName, lang)
     || (lang === 'de' ? 'Ing. Alaa Ahmad Almasri' : lang === 'ar' ? 'م. علاء أحمد المصري' : 'Eng. Alaa Ahmad Almasri');
   const engNameColor = tpl.engNameColor || NAVY;
-  const st = data.siteSettings;
-
   const sectionTitle: React.CSSProperties = { fontWeight: 900, color: theme, fontSize: fluid ? 14 : 15, marginBottom: 10, paddingInlineStart: 8, borderInlineStart: `4px solid ${theme}` };
   const docStyle: React.CSSProperties = fluid
     ? fluidBase

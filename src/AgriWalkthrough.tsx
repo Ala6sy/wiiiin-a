@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { AlaaLogo } from './AlaaLogo';
 import {
   AppData,
@@ -7,8 +7,10 @@ import {
   loadAppData,
   loadAppDataFromDb,
   pickML,
+  cvDocLabel,
+  type WebProject,
 } from './appData';
-import { resolveImageSrc } from './mediaUrl';
+import { resolveImageSrc, resolveAboutHeroMedia } from './mediaUrl';
 import { HeroNameDisplay } from './HeroNameDisplay';
 import './agri-walkthrough.css';
 
@@ -27,6 +29,12 @@ type Screen =
   | 'books'
   | 'articles'
   | 'soil'
+  | 'design'
+  | 'design-project'
+  | 'dev'
+  | 'dev-project'
+  | 'cv'
+  | 'cv-download'
   | 'done';
 
 export interface WalkStep {
@@ -37,17 +45,22 @@ export interface WalkStep {
   action?: string;
   reportFocus?: 'overview' | 'identity' | 'care' | 'soil' | 'nutrients' | 'planting' | 'uses' | 'health' | 'disease' | 'signature';
   seasonFocus?: 'overview' | 'weather' | 'table' | 'guide';
+  section?: 'home' | 'agri' | 'design' | 'dev' | 'cv' | 'done';
+  enabled?: boolean;
+  durationMs?: number;
+  speedMultiplier?: number;
+  audio?: Partial<Record<LangKey, string>>;
 }
 
 const T = (ar: string, en: string, de: string): Copy => ({ ar, en, de });
 const tx = (value: Copy, lang: LangKey) => value[lang] || value.en;
 
 const UI = {
-  pageTitle: T('جولة تفاعلية في قسم الزراعة', 'Interactive Agri Tour', 'Interaktive Agrar-Tour'),
+  pageTitle: T('جولة تفاعلية في الموقع', 'Interactive Site Tour', 'Interaktive Website-Tour'),
   pageLead: T(
-    'شاهد كيف تعمل خدمات الزراعة خطوة بخطوة داخل محاكاة حقيقية للجوال.',
-    'See how the agricultural services work step by step inside a realistic phone simulation.',
-    'Sehen Sie Schritt für Schritt, wie die Agrardienste in einer realistischen Handy-Simulation funktionieren.',
+    'شاهد كيف تعمل خدمات الزراعة والتصاميم والبرمجة والسيرة خطوة بخطوة داخل محاكاة حقيقية للجوال.',
+    'See how agriculture, design, programming and CV services work step by step inside a realistic phone simulation.',
+    'Sehen Sie Agrar-, Design-, Programmier- und CV-Dienste Schritt für Schritt in einer realistischen Handy-Simulation.',
   ),
   back: T('العودة للموقع', 'Back to website', 'Zur Website'),
   previous: T('السابق', 'Previous', 'Zurück'),
@@ -56,6 +69,7 @@ const UI = {
   pause: T('إيقاف مؤقت', 'Pause', 'Pause'),
   replay: T('إعادة الجولة', 'Replay tour', 'Tour wiederholen'),
   speed: T('سرعة الشرح', 'Tour speed', 'Geschwindigkeit'),
+  accelerate: T('تسريع الجولة', 'Speed up tour', 'Tour beschleunigen'),
   narration: T('قراءة صوتية', 'Voice narration', 'Sprachausgabe'),
   steps: T('خطوات الجولة', 'Tour steps', 'Tour-Schritte'),
   step: T('الخطوة', 'Step', 'Schritt'),
@@ -67,6 +81,19 @@ const UI = {
     'Die Sprachausgabe ist optional und verwendet Browser-Stimmen.',
   ),
 };
+
+// مفتاح جديد لأن القيمة أصبحت «مضاعفاً» فوق سرعة الإدارة، لا سرعة مطلقة.
+const VISITOR_SPEED_KEY = 'alaa_walkthrough_speed_multiplier';
+const SPEED_OPTIONS = [0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10];
+
+function readVisitorSpeed(fallback = 1) {
+  try {
+    const raw = Number(localStorage.getItem(VISITOR_SPEED_KEY));
+    return SPEED_OPTIONS.includes(raw) ? raw : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export const WALKTHROUGH_STEPS: WalkStep[] = [
   {
@@ -397,6 +424,7 @@ export const WALKTHROUGH_STEPS: WalkStep[] = [
   {
     id: 'soil',
     screen: 'soil',
+    section: 'agri',
     title: T('تحليل التربة والتواصل', 'Soil analysis and contact', 'Bodenanalyse und Kontakt'),
     body: T(
       'يشرح قسم تحليل التربة الخدمة بالفيديو التوضيحي، ويتيح التواصل مع المهندس وإرسال موقع الأرض ومشاهدة تقارير العملاء.',
@@ -405,13 +433,109 @@ export const WALKTHROUGH_STEPS: WalkStep[] = [
     ),
   },
   {
+    id: 'open-design',
+    screen: 'design',
+    action: 'nav-design',
+    section: 'design',
+    title: T('الدخول إلى التصاميم', 'Enter Design gallery', 'Design-Galerie öffnen'),
+    body: T(
+      'ننتقل إلى معرض التصاميم: تصنيفات، فروع، ومشاريع مع معاينة الصور والنماذج ثلاثية الأبعاد.',
+      'We enter the Design gallery: categories, subcategories and projects with image and 3D previews.',
+      'Wir öffnen die Design-Galerie mit Kategorien, Unterkategorien und Projekten inklusive Bild- und 3D-Vorschau.',
+    ),
+  },
+  {
+    id: 'design-browse',
+    screen: 'design',
+    section: 'design',
+    title: T('تصفح مشاريع التصاميم', 'Browse design projects', 'Designprojekte durchsuchen'),
+    body: T(
+      'نشاهد معرض التصاميم من الخارج بتمرير تلقائي متدرج من أعلى المعرض إلى أسفله دون فتح كل مشروع.',
+      'We browse the design gallery from the outside with an accelerating top-to-bottom scroll, without opening every project.',
+      'Wir betrachten die Design-Galerie von außen mit beschleunigtem Scrollen von oben nach unten, ohne jedes Projekt zu öffnen.',
+    ),
+  },
+  {
+    id: 'open-dev',
+    screen: 'dev',
+    action: 'nav-dev',
+    section: 'dev',
+    title: T('الدخول إلى البرمجة', 'Enter Programming', 'Programmierung öffnen'),
+    body: T(
+      'قسم البرمجة يعرض المشاريع البرمجية والمختبرات التفاعلية داخل الموقع.',
+      'The Programming section shows software projects and interactive labs on the site.',
+      'Der Programmierbereich zeigt Softwareprojekte und interaktive Labs auf der Website.',
+    ),
+  },
+  {
+    id: 'dev-browse',
+    screen: 'dev',
+    action: 'dev-card',
+    section: 'dev',
+    title: T('تصفح المشاريع البرمجية', 'Browse software projects', 'Softwareprojekte durchsuchen'),
+    body: T(
+      'كل مشروع يظهر بصورته ووصفه المختصر وروابطه، مع إمكانية فتح التفاصيل.',
+      'Each project shows its image, short description and links, with a detail view.',
+      'Jedes Projekt zeigt Bild, Kurzbeschreibung und Links sowie eine Detailansicht.',
+    ),
+  },
+  {
+    id: 'dev-project',
+    screen: 'dev-project',
+    action: 'dev-open',
+    section: 'dev',
+    title: T('تفاصيل مشروع برمجي', 'Software project details', 'Softwareprojektdetails'),
+    body: T(
+      'تفتح صفحة المشروع مع الوصف والمعاينة وروابط الزيارة أو المختبر.',
+      'The project page opens with description, preview and visit or lab links.',
+      'Die Projektseite öffnet sich mit Beschreibung, Vorschau und Besuch- oder Lab-Links.',
+    ),
+  },
+  {
+    id: 'open-cv',
+    screen: 'cv',
+    action: 'nav-cv',
+    section: 'cv',
+    title: T('الدخول إلى السيرة', 'Enter CV / About', 'CV / Über mich öffnen'),
+    body: T(
+      'صفحة السيرة تعرض النبذة والمهارات وأزرار تنزيل ملفات السيرة الذاتية.',
+      'The About page shows the bio, skills and résumé download buttons.',
+      'Die Über-mich-Seite zeigt Bio, Fähigkeiten und Lebenslauf-Downloads.',
+    ),
+  },
+  {
+    id: 'cv-skills',
+    screen: 'cv',
+    action: 'cv-skills',
+    section: 'cv',
+    title: T('المهارات والخبرات', 'Skills and experience', 'Fähigkeiten und Erfahrung'),
+    body: T(
+      'تظهر المهارات بنسبة مئوية وأيقونات البرامج المستخدمة في التصاميم والبرمجة.',
+      'Skills appear with percentages and icons for the tools used in design and programming.',
+      'Fähigkeiten erscheinen mit Prozentwerten und Icons der Design- und Programmierwerkzeuge.',
+    ),
+  },
+  {
+    id: 'cv-download',
+    screen: 'cv-download',
+    action: 'cv-download',
+    section: 'cv',
+    title: T('تنزيل السيرة الذاتية', 'Download the résumé', 'Lebenslauf herunterladen'),
+    body: T(
+      'يمكن للزائر اختيار لغة السيرة وتنزيلها أو طباعتها كملف PDF.',
+      'Visitors can choose the résumé language and download or print it as PDF.',
+      'Besucher können die Lebenslauf-Sprache wählen und als PDF herunterladen oder drucken.',
+    ),
+  },
+  {
     id: 'done',
     screen: 'done',
-    title: T('قسم زراعة متكامل', 'A complete Agri section', 'Ein vollständiger Agrarbereich'),
+    section: 'done',
+    title: T('موقع متكامل في جولة واحدة', 'A complete site in one tour', 'Eine komplette Website in einer Tour'),
     body: T(
-      'من صورة نبات إلى تقرير تشخيص، ومن الموقع والطقس إلى تقرير الموسم، إضافةً إلى المعرفة والتواصل — كل ذلك داخل eng-alaa.com.',
-      'From a plant photo to a diagnostic report, and from location and weather to a season report—plus knowledge and contact, all inside eng-alaa.com.',
-      'Vom Pflanzenfoto zum Diagnosebericht und von Standort und Wetter zum Saisonbericht – ergänzt durch Wissen und Kontakt auf eng-alaa.com.',
+      'من الزراعة والتشخيص إلى التصاميم والبرمجة والسيرة — كل الخدمات داخل eng-alaa.com بجولة واحدة.',
+      'From agriculture and diagnostics to design, programming and CV — all services on eng-alaa.com in one tour.',
+      'Von Agrar und Diagnose bis Design, Programmierung und CV – alle Dienste auf eng-alaa.com in einer Tour.',
     ),
   },
 ];
@@ -441,7 +565,7 @@ function PhoneHeader({ data, lang }: { data: AppData; lang: LangKey }) {
 }
 
 function BottomNav({ active = 'agri', focus, lang }: { active?: string; focus?: string; lang: LangKey }) {
-  const items = [
+  const items: Array<[string, string, Copy]> = [
     ['home', 'fa-house', T('الرئيسية', 'Home', 'Start')],
     ['agri', 'fa-seedling', T('الزراعة', 'Agri', 'Agrar')],
     ['design', 'fa-bezier-curve', T('التصاميم', 'Design', 'Design')],
@@ -449,7 +573,7 @@ function BottomNav({ active = 'agri', focus, lang }: { active?: string; focus?: 
     ['cv', 'fa-user', T('السيرة', 'CV', 'CV')],
   ];
   return (
-    <nav className="p-bottom-nav">
+    <nav className="p-bottom-nav" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       {items.map(([key, icon, label]) => (
         <button type="button" data-tour-step={key === 'agri' ? 'tap-agri' : `nav-${key}`} key={key} className={`p-nav-item ${active === key ? 'active' : ''} ${focus === `nav-${key}` ? 'p-focus' : ''}`}>
           <i className={`fa-solid ${icon}`} />
@@ -480,7 +604,7 @@ function AgriTabs({ focus, selected = 'plant', lang }: { focus?: string; selecte
   );
 }
 
-function HomeScreen({ data, focus, lang }: { data: AppData; focus?: string; lang: LangKey }) {
+function HomeScreen({ data, focus, lang, settings }: { data: AppData; focus?: string; lang: LangKey; settings?: AgriWalkthroughSettings }) {
   const socialLinks = data.siteSettings?.socialLinks?.length
     ? data.siteSettings.socialLinks
     : [
@@ -489,10 +613,20 @@ function HomeScreen({ data, focus, lang }: { data: AppData; focus?: string; lang
         { id: 'linkedin', icon: 'fa-brands fa-linkedin-in', url: '#' },
         { id: 'behance', icon: 'fa-brands fa-behance', url: '#' },
       ];
+  const nameScale = settings?.homeNameScale ?? 1;
+  const photoScale = settings?.homePhotoScale ?? 1;
+  const contentScale = settings?.homeContentScale ?? 1;
   return (
     <>
       <PhoneHeader data={data} lang={lang} />
-      <main className="p-phone-main p-home-screen">
+      <main
+        className="p-phone-main p-home-screen"
+        style={{
+          '--p-home-name-scale': nameScale,
+          '--p-home-photo-scale': photoScale,
+          '--p-home-content-scale': contentScale,
+        } as CSSProperties}
+      >
         <div className="p-home-orbits" aria-hidden="true"><span /><span /><span /></div>
         <div className="p-home-eyebrow">
           <span />
@@ -514,6 +648,18 @@ function HomeScreen({ data, focus, lang }: { data: AppData; focus?: string; lang
           className="p-real-name"
           as="div"
         />
+        {(() => {
+          const photo = (data.personalInfo?.photo || data.siteSettings?.aboutHeroMedia || '').trim();
+          if (!photo) return null;
+          const hero = resolveAboutHeroMedia(photo, data.siteSettings?.aboutHeroKind || 'auto');
+          return (
+            <div className="p-home-photo">
+              {hero.kind === 'video'
+                ? <video src={hero.src} muted playsInline autoPlay loop />
+                : <img src={hero.src} alt="" />}
+            </div>
+          );
+        })()}
         <div className="p-home-divider"><i /><span /><i /></div>
         <p>{pickML(data.bio, lang) || (lang === 'ar' ? 'مهندس زراعي سوري، متخصص في البيوتكنولوجي ومصمم ومطور برمجيات.' : 'Agricultural engineer, designer and software developer.')}</p>
         <div className="p-home-socials">
@@ -762,8 +908,7 @@ function SeasonLocationScreen({ data, focus, lang }: { data: AppData; focus?: st
   );
 }
 
-function SeasonReportScreen({ data, focus = 'overview', lang }: { data: AppData; focus?: WalkStep['seasonFocus']; lang: LangKey }) {
-  const tpl = data.reportTemplate;
+function SeasonReportScreen({ data: _data, focus = 'overview', lang }: { data: AppData; focus?: WalkStep['seasonFocus']; lang: LangKey }) {
   return (
     <div className={`p-season-viewport focus-${focus}`}>
       <article className="p-season-sheet">
@@ -815,21 +960,255 @@ function QuickSectionScreen({ data, screen, lang }: { data: AppData; screen: Scr
   );
 }
 
-function DoneScreen({ data, lang }: { data: AppData; lang: LangKey }) {
+function DoneScreen({ data: _data, lang }: { data: AppData; lang: LangKey }) {
   return (
     <div className="p-done-screen">
       <AlaaLogo color="#fff" size={74} />
-      <h2>{lang === 'ar' ? 'بوابة الهندسة الزراعية' : lang === 'de' ? 'Portal für Agrartechnik' : 'Agricultural Engineering Portal'}</h2>
-      <p>eng-alaa.com</p>
-      <div><span><i className="fa-solid fa-leaf" /> Plant</span><span><i className="fa-solid fa-cloud-sun" /> Season</span><span><i className="fa-solid fa-flask" /> Soil</span></div>
+      <h2>{lang === 'ar' ? 'eng-alaa.com' : 'eng-alaa.com'}</h2>
+      <p>{lang === 'ar' ? 'زراعة · تصاميم · برمجة · سيرة' : lang === 'de' ? 'Agrar · Design · Code · CV' : 'Agri · Design · Dev · CV'}</p>
+      <div>
+        <span><i className="fa-solid fa-leaf" /> Agri</span>
+        <span><i className="fa-solid fa-bezier-curve" /> Design</span>
+        <span><i className="fa-solid fa-code" /> Dev</span>
+        <span><i className="fa-solid fa-user" /> CV</span>
+      </div>
     </div>
   );
 }
 
-function PhoneContent({ step, data, lang, plantImages }: { step: WalkStep; data: AppData; lang: LangKey; plantImages: string[] }) {
+function DesignScreen({
+  data,
+  focus,
+  lang,
+  autoScrollDurationMs = 0,
+}: {
+  data: AppData;
+  focus?: string;
+  lang: LangKey;
+  autoScrollDurationMs?: number;
+}) {
+  const scrollRef = useRef<HTMLElement>(null);
+  const cats = data.gfxCategories || [];
+  const items = cats.flatMap(c => c.subCategories.flatMap(s => s.items)).slice(0, 14);
+
+  useEffect(() => {
+    const viewport = scrollRef.current;
+    if (!viewport || autoScrollDurationMs <= 0) return;
+    viewport.scrollTop = 0;
+    let frame = 0;
+    let startedAt = 0;
+    const delayMs = 550;
+    const animate = (now: number) => {
+      if (!startedAt) startedAt = now;
+      const elapsed = now - startedAt;
+      if (elapsed < delayMs) {
+        frame = requestAnimationFrame(animate);
+        return;
+      }
+      const duration = Math.max(1200, autoScrollDurationMs - delayMs);
+      const progress = Math.min(1, (elapsed - delayMs) / duration);
+      const accelerated = progress * progress;
+      const maxScroll = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      viewport.scrollTop = maxScroll * accelerated;
+      if (progress < 1) frame = requestAnimationFrame(animate);
+    };
+    frame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frame);
+  }, [autoScrollDurationMs]);
+
+  return (
+    <>
+      <PhoneHeader data={data} lang={lang} />
+      <main ref={scrollRef} className={`p-phone-main p-gallery-screen ${autoScrollDurationMs > 0 ? 'is-auto-scrolling' : ''}`}>
+        <h2 className="p-portal-title">{lang === 'ar' ? 'معرض التصاميم' : lang === 'de' ? 'Design-Galerie' : 'Design Gallery'}</h2>
+        <div className="p-chip-row">
+          {(cats.length ? cats : [{ id: 'all', name: T('الكل', 'All', 'Alle'), subCategories: [] }]).slice(0, 3).map(cat => (
+            <span key={cat.id}>{pickML(cat.name, lang) || '—'}</span>
+          ))}
+        </div>
+        <div className="p-gallery-grid">
+          {(items.length ? items : [
+            { id: 'd1', title: T('مشروع تصميم', 'Design project', 'Designprojekt'), mainImg: '' },
+            { id: 'd2', title: T('نموذج ثلاثي', '3D model', '3D-Modell'), mainImg: '' },
+            { id: 'd3', title: T('حديقة فيلا', 'Villa garden', 'Villengarten'), mainImg: '' },
+          ]).map((item, i) => (
+            <button
+              type="button"
+              key={item.id}
+              data-tour-step="design-project"
+              className={`p-gallery-card ${focus === 'design-card' && i === 0 ? 'p-focus' : ''}`}
+            >
+              {item.mainImg
+                ? <img src={resolveImageSrc(item.mainImg)} alt="" />
+                : <div className="p-gallery-ph"><i className="fa-solid fa-bezier-curve" /></div>}
+              <b>{pickML(item.title, lang) || '—'}</b>
+            </button>
+          ))}
+        </div>
+      </main>
+      <BottomNav active="design" focus={focus} lang={lang} />
+    </>
+  );
+}
+
+function DesignProjectScreen({ data, focus, lang }: { data: AppData; focus?: string; lang: LangKey }) {
+  const item = (data.gfxCategories || []).flatMap(c => c.subCategories.flatMap(s => s.items))[0];
+  return (
+    <>
+      <PhoneHeader data={data} lang={lang} />
+      <main className="p-phone-main p-project-screen">
+        <div className={`p-project-hero ${focus === 'design-open' ? 'p-focus' : ''}`} data-tour-step="design-browse">
+          {item?.mainImg
+            ? <img src={resolveImageSrc(item.mainImg)} alt="" />
+            : <div className="p-gallery-ph tall"><i className="fa-solid fa-cube" /></div>}
+        </div>
+        <h3>{pickML(item?.title, lang) || (lang === 'ar' ? 'مشروع تصميم' : 'Design project')}</h3>
+        <p>{pickML(item?.desc, lang) || (lang === 'ar' ? 'معاينة مشروع من معرض التصاميم مع الصور والنموذج ثلاثي الأبعاد.' : 'A design gallery project with images and 3D preview.')}</p>
+        <button type="button" className="p-primary"><i className="fa-solid fa-cube" /> {lang === 'ar' ? 'معاينة 3D' : '3D preview'}</button>
+      </main>
+      <BottomNav active="design" lang={lang} />
+    </>
+  );
+}
+
+function DevScreen({ data, focus, lang }: { data: AppData; focus?: string; lang: LangKey }) {
+  const projects = (data.webProjects || []).slice(0, 4);
+  return (
+    <>
+      <PhoneHeader data={data} lang={lang} />
+      <main className="p-phone-main p-gallery-screen">
+        <h2 className="p-portal-title">{lang === 'ar' ? 'المشاريع البرمجية' : lang === 'de' ? 'Softwareprojekte' : 'Software Projects'}</h2>
+        <div className="p-chip-row">
+          <span>{lang === 'ar' ? 'مشاريع' : 'Projects'}</span>
+          <span>{lang === 'ar' ? 'مختبرات' : 'Labs'}</span>
+        </div>
+        <div className="p-dev-list">
+          {(projects.length ? projects : [
+            { id: 'w1', title: T('منصة ويب', 'Web platform', 'Webplattform'), desc: T('وصف مختصر', 'Short description', 'Kurzbeschreibung'), mainImg: '' } as Partial<WebProject> & { id: string; title: Copy; desc: Copy; mainImg: string },
+            { id: 'w2', title: T('أداة تفاعلية', 'Interactive tool', 'Interaktives Tool'), desc: T('وصف مختصر', 'Short description', 'Kurzbeschreibung'), mainImg: '' } as Partial<WebProject> & { id: string; title: Copy; desc: Copy; mainImg: string },
+          ]).map((item, i) => (
+            <button
+              type="button"
+              key={item.id}
+              data-tour-step="dev-project"
+              className={`p-dev-card ${focus === 'dev-card' && i === 0 ? 'p-focus' : ''}`}
+            >
+              {item.mainImg
+                ? <img src={resolveImageSrc(item.mainImg)} alt="" />
+                : <div className="p-gallery-ph"><i className="fa-solid fa-code" /></div>}
+              <span>
+                <b>{pickML(item.title, lang) || '—'}</b>
+                <small>{pickML(item.desc, lang) || ''}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      </main>
+      <BottomNav active="dev" focus={focus} lang={lang} />
+    </>
+  );
+}
+
+function DevProjectScreen({ data, focus, lang }: { data: AppData; focus?: string; lang: LangKey }) {
+  const item = (data.webProjects || [])[0];
+  return (
+    <>
+      <PhoneHeader data={data} lang={lang} />
+      <main className="p-phone-main p-project-screen">
+        <div className={`p-project-hero ${focus === 'dev-open' ? 'p-focus' : ''}`}>
+          {item?.mainImg
+            ? <img src={resolveImageSrc(item.mainImg)} alt="" />
+            : <div className="p-gallery-ph tall"><i className="fa-solid fa-laptop-code" /></div>}
+        </div>
+        <h3>{pickML(item?.title, lang) || (lang === 'ar' ? 'مشروع برمجي' : 'Software project')}</h3>
+        <p>{pickML(item?.desc, lang) || (lang === 'ar' ? 'صفحة مشروع برمجي مع الوصف وروابط الزيارة.' : 'A software project page with description and visit links.')}</p>
+        <button type="button" className="p-primary"><i className="fa-solid fa-arrow-up-right-from-square" /> {lang === 'ar' ? 'زيارة المشروع' : 'Visit project'}</button>
+      </main>
+      <BottomNav active="dev" lang={lang} />
+    </>
+  );
+}
+
+function CvScreen({ data, focus, lang }: { data: AppData; focus?: string; lang: LangKey }) {
+  const skills = (data.skills || []).filter(s => s.showOnAbout !== false).slice(0, 5);
+  const hero = resolveAboutHeroMedia(data.siteSettings?.aboutHeroMedia, data.siteSettings?.aboutHeroKind || 'auto');
+  return (
+    <>
+      <PhoneHeader data={data} lang={lang} />
+      <main className="p-phone-main p-cv-screen">
+        <div className="p-cv-hero">
+          {hero.src
+            ? <img src={resolveImageSrc(hero.src)} alt="" />
+            : <AlaaLogo color="#fff" size={54} />}
+          <div>
+            <b>{pickML(data.name, lang)}</b>
+            <small>{(pickML(data.bio, lang) || '').slice(0, 70) || (lang === 'ar' ? 'مهندس · مصمم · مطور' : 'Engineer · Designer · Developer')}</small>
+          </div>
+        </div>
+        <p className="p-cv-bio">{(pickML(data.bio, lang) || '').slice(0, 140)}</p>
+        <div className={`p-cv-skills ${focus === 'cv-skills' ? 'p-focus' : ''}`} data-tour-step="cv-download">
+          {skills.map(s => (
+            <div key={s.id}><span>{s.name}</span><i style={{ width: `${Math.max(18, s.percent)}%` }} /></div>
+          ))}
+          {!skills.length && <div><span>AutoCAD</span><i style={{ width: '86%' }} /></div>}
+        </div>
+        <button type="button" data-tour-step="cv-download" className={`p-primary ${focus === 'cv-download' ? 'p-focus' : ''}`}>
+          <i className="fa-solid fa-file-pdf" /> {lang === 'ar' ? 'تنزيل السيرة' : lang === 'de' ? 'CV herunterladen' : 'Download CV'}
+        </button>
+      </main>
+      <BottomNav active="cv" focus={focus} lang={lang} />
+    </>
+  );
+}
+
+function CvDownloadScreen({ data, focus, lang }: { data: AppData; focus?: string; lang: LangKey }) {
+  const docs = (data.cvDocs || []).slice(0, 3);
+  return (
+    <>
+      <PhoneHeader data={data} lang={lang} />
+      <main className="p-phone-main p-cv-screen">
+        <h2 className="p-portal-title">{lang === 'ar' ? 'ملفات السيرة الذاتية' : lang === 'de' ? 'Lebenslauf-Dateien' : 'CV files'}</h2>
+        <div className="p-cv-docs">
+          {(docs.length ? docs : [
+            { id: 'cv1', name: T('سيرة الزراعة', 'Agri CV', 'Agrar-CV') },
+            { id: 'cv2', name: T('سيرة التصاميم', 'Design CV', 'Design-CV') },
+          ]).map((doc, i) => (
+            <button
+              type="button"
+              key={doc.id}
+              className={`p-cv-doc ${focus === 'cv-download' && i === 0 ? 'p-focus' : ''}`}
+            >
+              <i className="fa-solid fa-file-pdf" />
+              <span>{cvDocLabel(doc, lang)}</span>
+              <i className="fa-solid fa-download" />
+            </button>
+          ))}
+        </div>
+        <p className="p-cv-hint">{lang === 'ar' ? 'اختر اللغة ثم اطبع أو نزّل PDF.' : 'Choose language then print or download PDF.'}</p>
+      </main>
+      <BottomNav active="cv" lang={lang} />
+    </>
+  );
+}
+
+function PhoneContent({
+  step,
+  data,
+  lang,
+  plantImages,
+  settings,
+  designScrollDurationMs,
+}: {
+  step: WalkStep;
+  data: AppData;
+  lang: LangKey;
+  plantImages: string[];
+  settings?: AgriWalkthroughSettings;
+  designScrollDurationMs?: number;
+}) {
   const plantImage = plantImages[0] || PLANT_IMAGE;
   switch (step.screen) {
-    case 'home': return <HomeScreen data={data} lang={lang} focus={step.action} />;
+    case 'home': return <HomeScreen data={data} lang={lang} focus={step.action} settings={settings} />;
     case 'agri': return <AgriMenuScreen data={data} lang={lang} focus={step.action} />;
     case 'plant-upload': return <UploadScreen data={data} lang={lang} focus={step.action} plantImages={plantImages} />;
     case 'camera': return <CameraScreen lang={lang} focus={step.action} plantImage={plantImage} />;
@@ -842,100 +1221,284 @@ function PhoneContent({ step, data, lang, plantImages }: { step: WalkStep; data:
     case 'books':
     case 'articles':
     case 'soil': return <QuickSectionScreen data={data} lang={lang} screen={step.screen} />;
+    case 'design': return <DesignScreen data={data} lang={lang} focus={step.action} autoScrollDurationMs={step.id === 'design-browse' ? designScrollDurationMs : 0} />;
+    case 'design-project': return <DesignProjectScreen data={data} lang={lang} focus={step.action} />;
+    case 'dev': return <DevScreen data={data} lang={lang} focus={step.action} />;
+    case 'dev-project': return <DevProjectScreen data={data} lang={lang} focus={step.action} />;
+    case 'cv': return <CvScreen data={data} lang={lang} focus={step.action} />;
+    case 'cv-download': return <CvDownloadScreen data={data} lang={lang} focus={step.action} />;
     case 'done': return <DoneScreen data={data} lang={lang} />;
     default: return null;
   }
 }
 
-export default function AgriWalkthrough() {
-  const [lang, setLang] = useState<LangKey>('ar');
-  const [data, setData] = useState<AppData>(loadAppData);
+interface AgriWalkthroughProps {
+  embedded?: boolean;
+  initialData?: AppData;
+  initialLang?: LangKey;
+  /** وضع معاينة الإدارة: لا يشغّل الصوت تلقائياً ويمكن تثبيت خطوة */
+  previewMode?: boolean;
+  /** خطوة مثبتة من الإدارة (id) */
+  forceStepId?: string;
+  /** إخفاء لوحة الزائر والاكتفاء بالجوال */
+  phoneOnly?: boolean;
+  className?: string;
+}
+
+export function buildOrderedWalkthroughSteps(settings?: AgriWalkthroughSettings) {
+  const overrides = new Map((settings?.steps || []).map(value => [value.id, value]));
+  const order = settings?.stepOrder?.filter(Boolean) || [];
+  const orderedBases = (() => {
+    if (!order.length) return [...WALKTHROUGH_STEPS];
+    const byId = new Map(WALKTHROUGH_STEPS.map(step => [step.id, step]));
+    const seen = new Set<string>();
+    const next: WalkStep[] = [];
+    for (const id of order) {
+      const base = byId.get(id);
+      if (!base || seen.has(id)) continue;
+      next.push(base);
+      seen.add(id);
+    }
+    for (const base of WALKTHROUGH_STEPS) {
+      if (!seen.has(base.id)) next.push(base);
+    }
+    return next;
+  })();
+  return orderedBases.map(base => {
+    const override = overrides.get(base.id);
+    return {
+      ...base,
+      title: override?.title
+        ? {
+            ar: override.title.ar || base.title.ar,
+            en: override.title.en || base.title.en,
+            de: override.title.de || base.title.de,
+          }
+        : base.title,
+      body: override?.body
+        ? {
+            ar: override.body.ar || base.body.ar,
+            en: override.body.en || base.body.en,
+            de: override.body.de || base.body.de,
+          }
+        : base.body,
+      enabled: override?.enabled !== false,
+      durationMs: override?.durationMs || 5200,
+      speedMultiplier: override?.speedMultiplier || 1,
+      audio: override?.audio || {},
+    };
+  }).filter(value => value.enabled);
+}
+
+export function HomeAgriWalkthrough({
+  data,
+  lang,
+  variant = 'section',
+}: {
+  data: AppData;
+  lang: LangKey;
+  /** hero = نسخة مصغّرة داخل مقدمة الصفحة الرئيسية تحت اسم المهندس */
+  variant?: 'section' | 'hero';
+}) {
+  return (
+    <AgriWalkthrough
+      embedded
+      initialData={data}
+      initialLang={lang}
+      className={variant === 'hero' ? 'p-tour--hero' : ''}
+    />
+  );
+}
+
+export default function AgriWalkthrough({
+  embedded = false,
+  initialData,
+  initialLang = 'ar',
+  previewMode = false,
+  forceStepId,
+  phoneOnly = false,
+  className = '',
+}: AgriWalkthroughProps = {}) {
+  const [lang, setLang] = useState<LangKey>(initialLang);
+  const [data, setData] = useState<AppData>(() => initialData || loadAppData());
   const [index, setIndex] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1);
+  const [playing, setPlaying] = useState(!previewMode && initialData?.agriWalkthrough?.autoplay === true);
+  // اختيار الزائر مضاعف لسرعة الإدارة، وليس سرعة مستقلة عنها.
+  const [speed, setSpeed] = useState(() =>
+    embedded && !previewMode ? readVisitorSpeed(1) : 1,
+  );
   const [narration, setNarration] = useState(false);
   const [pressing, setPressing] = useState(false);
+  const [audioDurationMs, setAudioDurationMs] = useState(0);
   const spokenRef = useRef('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const speedMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const phoneShellRef = useRef<HTMLDivElement | null>(null);
+  const [handPos, setHandPos] = useState<{ left: number; top: number } | null>(null);
   const settings: AgriWalkthroughSettings = data.agriWalkthrough || {};
-  const steps = useMemo(() => {
-    const overrides = new Map((settings.steps || []).map(value => [value.id, value]));
-    return WALKTHROUGH_STEPS.map(base => {
-      const override = overrides.get(base.id);
-      return {
-        ...base,
-        title: override?.title
-          ? {
-              ar: override.title.ar || base.title.ar,
-              en: override.title.en || base.title.en,
-              de: override.title.de || base.title.de,
-            }
-          : base.title,
-        body: override?.body
-          ? {
-              ar: override.body.ar || base.body.ar,
-              en: override.body.en || base.body.en,
-              de: override.body.de || base.body.de,
-            }
-          : base.body,
-        enabled: override?.enabled !== false,
-        durationMs: override?.durationMs || 5200,
-        audio: override?.audio || {},
-      };
-    }).filter(value => value.enabled);
-  }, [settings.steps]);
-  const step = steps[Math.min(index, Math.max(0, steps.length - 1))] || WALKTHROUGH_STEPS[0]!;
+  const steps = useMemo(() => buildOrderedWalkthroughSteps(settings), [settings]);
+  const forcedIndex = forceStepId ? Math.max(0, steps.findIndex(step => step.id === forceStepId)) : -1;
+  const activeIndex = forcedIndex >= 0 ? forcedIndex : Math.min(index, Math.max(0, steps.length - 1));
+  const step = steps[activeIndex] || WALKTHROUGH_STEPS[0]!;
   const configuredImages = settings.plantImages?.filter(Boolean) || [];
   const hasLegacyDemoImages = configuredImages.some(image => image.includes('images.unsplash.com/photo-1515150144380') || image.includes('images.unsplash.com/photo-1530595467537'));
   const plantImages = configuredImages.length && !hasLegacyDemoImages
     ? configuredImages
     : [PLANT_IMAGE, LEAF_IMAGE];
+  const pressDurationMs = settings.pressDurationMs ?? 420;
+  const focusIntensity = settings.focusIntensity ?? 1;
+  const beamIntensity = settings.beamIntensity ?? 1;
+  const buttonGlow = settings.buttonGlow ?? 1;
+  const handSize = settings.handSize ?? 1;
+  const handMotion = settings.handMotion ?? 1;
+  const effectiveSpeed = Math.max(
+    0.1,
+    (settings.defaultSpeed || 1) * speed * (step.speedMultiplier || 1),
+  );
+  const runtimeStyle = {
+    '--p-dim-opacity': settings.dimOpacity ?? 0.6,
+    '--p-focus-glow': `${8 + focusIntensity * 18 + buttonGlow * 14}px`,
+    '--p-focus-scale': 1 + focusIntensity * 0.035,
+    '--p-beam-opacity': Math.min(1, beamIntensity / 1.35),
+    '--p-button-glow': Math.min(1, 0.35 + buttonGlow * 0.4),
+    '--p-press-ms': `${pressDurationMs}ms`,
+    '--p-hand-size': `${28 + handSize * 14}px`,
+    '--p-hand-x': `${settings.handOffsetX ?? 0}px`,
+    '--p-hand-y': `${settings.handOffsetY ?? 0}px`,
+    '--p-hand-motion': `${3 + handMotion * 5}px`,
+    '--p-hand-color': settings.handColor || '#69b8ff',
+  } as CSSProperties;
 
   useEffect(() => {
+    if (initialData) return;
     let alive = true;
     void loadAppDataFromDb().then(remote => {
       if (alive && remote) {
         setData(remote);
-        setSpeed(remote.agriWalkthrough?.defaultSpeed || 1);
         if (remote.agriWalkthrough?.autoplay) setPlaying(true);
       }
     });
     return () => { alive = false; };
-  }, []);
+  }, [initialData]);
 
   useEffect(() => {
+    if (initialData) {
+      setData(initialData);
+      if (previewMode) setSpeed(1);
+    }
+  }, [initialData, embedded, previewMode]);
+
+  useEffect(() => {
+    if (initialLang) setLang(initialLang);
+  }, [initialLang]);
+
+  useEffect(() => {
+    if (forcedIndex >= 0) {
+      setIndex(forcedIndex);
+      setPlaying(false);
+    }
+  }, [forcedIndex]);
+
+  useEffect(() => {
+    if (embedded && !previewMode) {
+      try { localStorage.setItem(VISITOR_SPEED_KEY, String(speed)); } catch { /* ignore */ }
+    }
+  }, [speed, embedded, previewMode]);
+
+  useEffect(() => {
+    if (embedded) return;
     document.documentElement.dataset.pTour = 'true';
     return () => { delete document.documentElement.dataset.pTour; };
-  }, []);
+  }, [embedded]);
 
   useEffect(() => {
     if (index >= steps.length) setIndex(Math.max(0, steps.length - 1));
   }, [index, steps.length]);
 
+  useLayoutEffect(() => {
+    if (settings.showHand === false || !step.action) {
+      setHandPos(null);
+      return;
+    }
+    const updateHand = () => {
+      const shell = phoneShellRef.current;
+      const focus = shell?.querySelector('.p-focus') as HTMLElement | null;
+      if (!shell || !focus) {
+        setHandPos(null);
+        return;
+      }
+      const shellRect = shell.getBoundingClientRect();
+      const focusRect = focus.getBoundingClientRect();
+      const scaleX = shellRect.width / Math.max(1, shell.offsetWidth);
+      const scaleY = shellRect.height / Math.max(1, shell.offsetHeight);
+      // طرف الإصبع على الزر، واليد تمتد خارج إطار الجوال لتظهر كاملة.
+      setHandPos({
+        left: (focusRect.left + focusRect.width * 0.58 - shellRect.left) / scaleX + (settings.handOffsetX ?? 0),
+        top: (focusRect.top + focusRect.height * 0.62 - shellRect.top) / scaleY + (settings.handOffsetY ?? 0),
+      });
+    };
+    updateHand();
+    const frame = window.requestAnimationFrame(updateHand);
+    window.addEventListener('resize', updateHand);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', updateHand);
+    };
+  }, [
+    step.id,
+    step.action,
+    step.screen,
+    pressing,
+    settings.showHand,
+    settings.handOffsetX,
+    settings.handOffsetY,
+    settings.handSize,
+    lang,
+    className,
+  ]);
+
   useEffect(() => {
-    if (!playing) return;
-    if (index >= steps.length - 1) {
+    if (!playing || previewMode || forcedIndex >= 0) return;
+    if (activeIndex >= steps.length - 1) {
       setPlaying(false);
       return;
     }
-    const timer = window.setTimeout(
-      () => setIndex(i => Math.min(steps.length - 1, i + 1)),
-      (step.durationMs || 5200) / speed,
-    );
-    return () => window.clearTimeout(timer);
-  }, [playing, index, speed, step.durationMs, steps.length]);
+    const totalMs = Math.max(step.durationMs || 5200, audioDurationMs) / effectiveSpeed;
+    const pressLead = step.action ? Math.min(pressDurationMs, totalMs * 0.45) : 0;
+    let pressTimer = 0;
+    const advanceTimer = window.setTimeout(() => {
+      if (!step.action) {
+        setIndex(i => Math.min(steps.length - 1, i + 1));
+        return;
+      }
+      setPressing(true);
+      pressTimer = window.setTimeout(() => {
+        setIndex(i => Math.min(steps.length - 1, i + 1));
+        setPressing(false);
+      }, pressLead);
+    }, Math.max(250, totalMs - pressLead));
+    return () => {
+      window.clearTimeout(advanceTimer);
+      window.clearTimeout(pressTimer);
+    };
+  }, [playing, activeIndex, speed, step.durationMs, step.speedMultiplier, step.action, steps.length, pressDurationMs, audioDurationMs, previewMode, forcedIndex, settings.defaultSpeed]);
 
   useEffect(() => {
     audioRef.current?.pause();
     audioRef.current = null;
-    if (!narration) return;
+    setAudioDurationMs(0);
+    if (!narration || previewMode) return;
     const key = `${lang}-${step.id}`;
     if (spokenRef.current === key) return;
     spokenRef.current = key;
     const recordedAudio = step.audio?.[lang];
     if (recordedAudio) {
       const audio = new Audio(resolveImageSrc(recordedAudio));
-      audio.playbackRate = speed;
+      const effectiveSpeed = (settings.defaultSpeed || 1) * speed * (step.speedMultiplier || 1);
+      audio.playbackRate = Math.min(4, Math.max(0.25, effectiveSpeed));
+      audio.onloadedmetadata = () => {
+        if (Number.isFinite(audio.duration)) setAudioDurationMs(audio.duration * 1000);
+      };
       audioRef.current = audio;
       void audio.play().catch(() => undefined);
       return () => {
@@ -947,19 +1510,24 @@ export default function AgriWalkthrough() {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(`${tx(step.title, lang)}. ${tx(step.body, lang)}`);
     utterance.lang = lang === 'ar' ? 'ar-AE' : lang === 'de' ? 'de-DE' : 'en-US';
-    utterance.rate = Math.min(1.25, 0.92 * speed);
+    const effectiveSpeed = (settings.defaultSpeed || 1) * speed * (step.speedMultiplier || 1);
+    utterance.rate = Math.min(2, 0.92 * Math.min(effectiveSpeed, 2));
     window.speechSynthesis.speak(utterance);
     return () => window.speechSynthesis.cancel();
-  }, [step, lang, narration, speed]);
+  }, [step, lang, narration, speed, previewMode, settings.defaultSpeed]);
 
   const groups = useMemo(() => [
     { label: T('البداية والشريط السفلي', 'Start & bottom bar', 'Start & untere Leiste'), ids: ['home', 'nav-home', 'tap-agri', 'nav-design', 'nav-dev', 'nav-cv', 'agri-menu'] },
     { label: T('فحص النبات', 'Plant Check', 'Pflanzencheck'), ids: steps.filter(s => s.id.startsWith('plant') || s.id.startsWith('report') || ['camera', 'images-ready', 'diagnosing', 'whatsapp'].includes(s.id)).map(s => s.id) },
     { label: T('موسمك الآن', 'Your Season', 'Ihre Saison'), ids: steps.filter(s => s.id.startsWith('season')).map(s => s.id) },
-    { label: T('المعرفة والتربة', 'Knowledge & Soil', 'Wissen & Boden'), ids: ['books', 'articles', 'soil', 'done'] },
+    { label: T('المعرفة والتربة', 'Knowledge & Soil', 'Wissen & Boden'), ids: ['books', 'articles', 'soil'] },
+    { label: T('التصاميم', 'Design', 'Design'), ids: ['open-design', 'design-browse'] },
+    { label: T('البرمجة', 'Programming', 'Programmierung'), ids: ['open-dev', 'dev-browse', 'dev-project'] },
+    { label: T('السيرة', 'CV', 'CV'), ids: ['open-cv', 'cv-skills', 'cv-download', 'done'] },
   ], [steps]);
 
   const go = (next: number) => {
+    if (forcedIndex >= 0) return;
     setIndex(Math.max(0, Math.min(steps.length - 1, next)));
   };
 
@@ -973,8 +1541,130 @@ export default function AgriWalkthrough() {
     });
   };
 
+  const phone = (
+    <section className="p-phone-stage" aria-live="polite">
+      <div className="p-phone-glow" />
+      <div className="p-phone-shell" ref={phoneShellRef}>
+        <div className="p-phone-side p-phone-side--left" />
+        <div className="p-phone-side p-phone-side--right" />
+        <div className="p-phone-notch"><span /><i /></div>
+        <div
+          className={`p-phone-screen ${step.action ? 'has-focus' : ''} ${pressing ? 'is-pressing' : ''}`}
+          key={step.screen + step.id}
+          onClick={event => {
+            const target = (event.target as HTMLElement).closest<HTMLElement>('[data-tour-step]');
+            const id = target?.dataset.tourStep;
+            if (!id || forcedIndex >= 0) return;
+            const next = steps.findIndex(value => value.id === id);
+            if (next >= 0) {
+              setPlaying(false);
+              setPressing(true);
+              window.setTimeout(() => {
+                go(next);
+                setPressing(false);
+              }, pressDurationMs);
+            }
+          }}
+        >
+          <PhoneContent
+            step={step}
+            data={data}
+            lang={lang}
+            plantImages={plantImages}
+            settings={settings}
+            designScrollDurationMs={(settings.designScrollDurationMs || 5200) / effectiveSpeed}
+          />
+        </div>
+        {handPos && settings.showHand !== false && (
+          <i
+            className={`fa-solid fa-hand-pointer p-tour-hand ${pressing ? 'is-pressing' : ''}`}
+            aria-hidden
+            style={{ left: handPos.left, top: handPos.top }}
+          />
+        )}
+      </div>
+      <div className="p-phone-shadow" />
+    </section>
+  );
+
+  if (embedded && settings.enabled === false && !previewMode) return null;
+
+  if (phoneOnly) {
+    return (
+      <div className={`p-tour p-tour--phone-only ${className}`} dir={lang === 'ar' ? 'rtl' : 'ltr'} style={runtimeStyle}>
+        {phone}
+      </div>
+    );
+  }
+
+  if (embedded) {
+    return (
+      <section id="site-walkthrough" className={`p-tour p-tour--embedded ${className}`} dir={lang === 'ar' ? 'rtl' : 'ltr'} style={runtimeStyle}>
+        <div className="p-embedded-heading">
+          <span className="p-tour-kicker"><i className="fa-solid fa-globe" /> ENG-ALAA · TOUR</span>
+          <h2>{tx(UI.pageTitle, lang)}</h2>
+          <p>{tx(UI.pageLead, lang)}</p>
+        </div>
+        <div className="p-embedded-tour">
+          <div className="p-embedded-toolbar">
+            <button onClick={() => { setPlaying(false); go(activeIndex - 1); }} disabled={activeIndex === 0} title={tx(UI.previous, lang)}>
+              <i className="fa-solid fa-backward-step" />
+            </button>
+            <button className="primary" onClick={() => {
+              if (activeIndex === steps.length - 1) go(0);
+              setPlaying(v => !v);
+            }}>
+              <i className={`fa-solid ${playing ? 'fa-pause' : 'fa-play'}`} />
+              <span>{tx(playing ? UI.pause : activeIndex === steps.length - 1 ? UI.replay : UI.play, lang)}</span>
+            </button>
+            <button onClick={() => { setPlaying(false); go(activeIndex + 1); }} disabled={activeIndex === steps.length - 1} title={tx(UI.next, lang)}>
+              <i className="fa-solid fa-forward-step" />
+            </button>
+            <button className={narration ? 'voice active' : 'voice'} onClick={toggleNarration} title={tx(UI.narration, lang)}>
+              <i className={`fa-solid ${narration ? 'fa-volume-high' : 'fa-volume-xmark'}`} />
+            </button>
+            <details ref={speedMenuRef} className="p-speed-menu">
+              <summary title={tx(UI.speed, lang)}>
+                <i className="fa-solid fa-gauge-high" />
+                <span><small>{tx(UI.accelerate, lang)}</small><b>×{speed}</b></span>
+                <i className="fa-solid fa-chevron-down p-speed-chevron" />
+              </summary>
+              <div className="p-speed-popover">
+                {SPEED_OPTIONS.map(value => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={speed === value ? 'active' : ''}
+                    onClick={() => {
+                      setSpeed(value);
+                      if (speedMenuRef.current) speedMenuRef.current.open = false;
+                    }}
+                  >
+                    <span>×{value}</span>
+                    {speed === value && <i className="fa-solid fa-check" />}
+                  </button>
+                ))}
+              </div>
+            </details>
+          </div>
+          {phone}
+          <div className="p-visitor-panel">
+            <article className="p-explain-card" key={`${lang}-${step.id}`}>
+              <span className="p-explain-num">{String(activeIndex + 1).padStart(2, '0')}</span>
+              <div><h2>{tx(step.title, lang)}</h2><p>{tx(step.body, lang)}</p></div>
+            </article>
+            <div className="p-step-counter">
+              <span>{tx(UI.step, lang)} {activeIndex + 1} {tx(UI.of, lang)} {steps.length}</span>
+              <div><i style={{ width: `${((activeIndex + 1) / Math.max(1, steps.length)) * 100}%` }} /></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <div className="p-tour" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+    <div className={`p-tour ${className}`} dir={lang === 'ar' ? 'rtl' : 'ltr'} style={runtimeStyle}>
       <header className="p-tour-nav">
         <a href="/" className="p-tour-brand">
           <FauxLogo data={data} />
@@ -992,41 +1682,38 @@ export default function AgriWalkthrough() {
 
       <main className="p-tour-layout">
         <section className="p-tour-copy">
-          <span className="p-tour-kicker"><i className="fa-solid fa-seedling" /> ENG-ALAA · AGRI</span>
+          <span className="p-tour-kicker"><i className="fa-solid fa-globe" /> ENG-ALAA · TOUR</span>
           <h1>{tx(UI.pageTitle, lang)}</h1>
           <p className="p-tour-lead">{tx(UI.pageLead, lang)}</p>
 
           <div className="p-step-counter">
-            <span>{tx(UI.step, lang)} {index + 1} {tx(UI.of, lang)} {steps.length}</span>
-            <div><i style={{ width: `${((index + 1) / steps.length) * 100}%` }} /></div>
+            <span>{tx(UI.step, lang)} {activeIndex + 1} {tx(UI.of, lang)} {steps.length}</span>
+            <div><i style={{ width: `${((activeIndex + 1) / Math.max(1, steps.length)) * 100}%` }} /></div>
           </div>
 
           <article className="p-explain-card" key={`${lang}-${step.id}`}>
-            <span className="p-explain-num">{String(index + 1).padStart(2, '0')}</span>
+            <span className="p-explain-num">{String(activeIndex + 1).padStart(2, '0')}</span>
             <div><h2>{tx(step.title, lang)}</h2><p>{tx(step.body, lang)}</p></div>
           </article>
 
           <div className="p-tour-controls">
-            <button onClick={() => go(index - 1)} disabled={index === 0} title={tx(UI.previous, lang)}><i className="fa-solid fa-backward-step" /></button>
+            <button onClick={() => go(activeIndex - 1)} disabled={activeIndex === 0} title={tx(UI.previous, lang)}><i className="fa-solid fa-backward-step" /></button>
             <button className="primary" onClick={() => {
-              if (index === steps.length - 1) {
+              if (activeIndex === steps.length - 1) {
                 go(0);
                 setPlaying(true);
               } else setPlaying(v => !v);
             }}>
-              <i className={`fa-solid ${index === steps.length - 1 ? 'fa-rotate-right' : playing ? 'fa-pause' : 'fa-play'}`} />
-              {tx(index === steps.length - 1 ? UI.replay : playing ? UI.pause : UI.play, lang)}
+              <i className={`fa-solid ${activeIndex === steps.length - 1 ? 'fa-rotate-right' : playing ? 'fa-pause' : 'fa-play'}`} />
+              {tx(activeIndex === steps.length - 1 ? UI.replay : playing ? UI.pause : UI.play, lang)}
             </button>
-            <button onClick={() => go(index + 1)} disabled={index === steps.length - 1} title={tx(UI.next, lang)}><i className="fa-solid fa-forward-step" /></button>
+            <button onClick={() => go(activeIndex + 1)} disabled={activeIndex === steps.length - 1} title={tx(UI.next, lang)}><i className="fa-solid fa-forward-step" /></button>
           </div>
 
           <div className="p-tour-options">
             <label><span><i className="fa-solid fa-gauge-high" /> {tx(UI.speed, lang)}</span>
               <select value={speed} onChange={e => setSpeed(Number(e.target.value))}>
-                <option value={0.65}>0.65×</option>
-                <option value={1}>1×</option>
-                <option value={1.5}>1.5×</option>
-                <option value={2}>2×</option>
+                {SPEED_OPTIONS.map(value => <option key={value} value={value}>{value}×</option>)}
               </select>
             </label>
             <button className={narration ? 'active' : ''} onClick={toggleNarration}><i className={`fa-solid ${narration ? 'fa-volume-high' : 'fa-volume-xmark'}`} /> {tx(UI.narration, lang)}</button>
@@ -1034,47 +1721,19 @@ export default function AgriWalkthrough() {
           {narration && <small className="p-voice-hint">{tx(UI.voiceHint, lang)}</small>}
         </section>
 
-        <section className="p-phone-stage" aria-live="polite">
-          <div className="p-phone-glow" />
-          <div className="p-phone-shell">
-            <div className="p-phone-side p-phone-side--left" />
-            <div className="p-phone-side p-phone-side--right" />
-            <div className="p-phone-notch"><span /><i /></div>
-            <div
-              className={`p-phone-screen ${step.action ? 'has-focus' : ''} ${pressing ? 'is-pressing' : ''}`}
-              key={step.screen + step.id}
-              onClick={event => {
-                const target = (event.target as HTMLElement).closest<HTMLElement>('[data-tour-step]');
-                const id = target?.dataset.tourStep;
-                if (!id) return;
-                const next = steps.findIndex(value => value.id === id);
-                if (next >= 0) {
-                  setPlaying(false);
-                  setPressing(true);
-                  window.setTimeout(() => {
-                    go(next);
-                    setPressing(false);
-                  }, 320);
-                }
-              }}
-            >
-              <PhoneContent step={step} data={data} lang={lang} plantImages={plantImages} />
-            </div>
-          </div>
-          <div className="p-phone-shadow" />
-        </section>
+        {phone}
 
         <aside className="p-tour-timeline">
           <h2>{tx(UI.steps, lang)}</h2>
           {groups.map(group => (
-            <div className="p-step-group" key={group.ids[0]}>
+            <div className="p-step-group" key={group.ids[0] || group.label.en}>
               <h3>{tx(group.label, lang)}</h3>
               {group.ids.map(id => {
                 const i = steps.findIndex(s => s.id === id);
                 if (i < 0) return null;
                 return (
-                  <button key={id} className={`${i === index ? 'active' : ''} ${i < index ? 'done' : ''}`} onClick={() => go(i)}>
-                    <span>{i < index ? <i className="fa-solid fa-check" /> : i + 1}</span>
+                  <button key={id} className={`${i === activeIndex ? 'active' : ''} ${i < activeIndex ? 'done' : ''}`} onClick={() => go(i)}>
+                    <span>{i < activeIndex ? <i className="fa-solid fa-check" /> : i + 1}</span>
                     <b>{tx(steps[i]!.title, lang)}</b>
                   </button>
                 );

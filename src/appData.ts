@@ -904,13 +904,15 @@ export interface CustomCv { id: string; name: string; template: 'agri' | 'dev'; 
 /** طريقة عرض الاسم في الواجهة الرئيسية */
 export type NameDisplayMode = 'text' | 'handwriting' | 'logo';
 
-/** تخصيص الجولة التفاعلية في /p — النص والصوت لكل لغة */
+/** تخصيص الجولة التفاعلية الظاهرة في الصفحة الرئيسية */
 export interface WalkthroughStepSettings {
   id: string;
   enabled?: boolean;
   title?: ML;
   body?: ML;
   durationMs?: number;
+  /** مضاعف سرعة خاص بهذه الخطوة فوق سرعة الإدارة العامة */
+  speedMultiplier?: number;
   audio?: Partial<Record<LangKey, string>>;
 }
 
@@ -918,9 +920,30 @@ export interface AgriWalkthroughSettings {
   enabled?: boolean;
   autoplay?: boolean;
   defaultSpeed?: number;
+  dimOpacity?: number;
+  focusIntensity?: number;
+  beamIntensity?: number;
+  buttonGlow?: number;
+  pressDurationMs?: number;
+  showHand?: boolean;
+  handSize?: number;
+  handOffsetX?: number;
+  handOffsetY?: number;
+  handMotion?: number;
+  /** لون مؤشر الإصبع بصيغة CSS، والافتراضي أزرق مضيء */
+  handColor?: string;
+  /** مدة التمرير التلقائي داخل معرض التصاميم */
+  designScrollDurationMs?: number;
+  homeNameScale?: number;
+  homePhotoScale?: number;
+  homeContentScale?: number;
+  previewStepId?: string;
+  stepOrder?: string[];
   plantImages?: string[];
   steps?: WalkthroughStepSettings[];
 }
+
+export const WALKTHROUGH_SPEED_OPTIONS = [0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10] as const;
 
 /* ── App-wide ────────────────────────────────────────────── */
 export interface AppData {
@@ -1379,6 +1402,23 @@ const DEFAULT_DATA: AppData = {
     enabled: true,
     autoplay: false,
     defaultSpeed: 1,
+    dimOpacity: 0.6,
+    focusIntensity: 1,
+    beamIntensity: 1,
+    buttonGlow: 1,
+    pressDurationMs: 420,
+    showHand: true,
+    handSize: 1,
+    handOffsetX: 0,
+    handOffsetY: 0,
+    handMotion: 1,
+    handColor: '#69b8ff',
+    designScrollDurationMs: 5200,
+    homeNameScale: 1,
+    homePhotoScale: 1,
+    homeContentScale: 1,
+    previewStepId: 'home',
+    stepOrder: [],
     plantImages: [
       '/milk-thistle-field.jpg',
       '/milk-thistle-leaf-field.jpg',
@@ -2029,12 +2069,31 @@ export function loadAppData(): AppData {
         const raw = src.agriWalkthrough && typeof src.agriWalkthrough === 'object'
           ? src.agriWalkthrough as Record<string, unknown>
           : {};
+        const clampNum = (v: unknown, min: number, max: number, fallback: number) =>
+          typeof v === 'number' && Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback;
         return {
           enabled: raw.enabled !== false,
           autoplay: raw.autoplay === true,
-          defaultSpeed: typeof raw.defaultSpeed === 'number'
-            ? Math.max(0.5, Math.min(3, raw.defaultSpeed))
-            : 1,
+          defaultSpeed: clampNum(raw.defaultSpeed, 0.5, 10, 1),
+          dimOpacity: clampNum(raw.dimOpacity, 0, 0.9, 0.6),
+          focusIntensity: clampNum(raw.focusIntensity, 0, 2, 1),
+          beamIntensity: clampNum(raw.beamIntensity, 0, 2, 1),
+          buttonGlow: clampNum(raw.buttonGlow, 0, 2, 1),
+          pressDurationMs: clampNum(raw.pressDurationMs, 150, 1600, 420),
+          showHand: raw.showHand !== false,
+          handSize: clampNum(raw.handSize, 0.5, 2, 1),
+          handOffsetX: clampNum(raw.handOffsetX, -40, 40, 0),
+          handOffsetY: clampNum(raw.handOffsetY, -40, 40, 0),
+          handMotion: clampNum(raw.handMotion, 0, 2, 1),
+          handColor: typeof raw.handColor === 'string' && raw.handColor.trim()
+            ? raw.handColor.trim().slice(0, 32)
+            : '#69b8ff',
+          designScrollDurationMs: clampNum(raw.designScrollDurationMs, 1500, 15000, 5200),
+          homeNameScale: clampNum(raw.homeNameScale, 0.45, 1.6, 1),
+          homePhotoScale: clampNum(raw.homePhotoScale, 0.45, 1.6, 1),
+          homeContentScale: clampNum(raw.homeContentScale, 0.7, 1.25, 1),
+          previewStepId: typeof raw.previewStepId === 'string' ? raw.previewStepId : 'home',
+          stepOrder: arr<string>(raw.stepOrder, []).filter(Boolean),
           plantImages: arr<string>(raw.plantImages, DEFAULT_DATA.agriWalkthrough?.plantImages || []),
           steps: arr<unknown>(raw.steps, []).map(value => {
             const step = value && typeof value === 'object' ? value as Record<string, unknown> : {};
@@ -2049,6 +2108,9 @@ export function loadAppData(): AppData {
               durationMs: typeof step.durationMs === 'number'
                 ? Math.max(1500, Math.min(30000, step.durationMs))
                 : undefined,
+              speedMultiplier: typeof step.speedMultiplier === 'number' && Number.isFinite(step.speedMultiplier)
+                ? Math.max(0.25, Math.min(10, step.speedMultiplier))
+                : 1,
               audio: {
                 ar: typeof audioRaw.ar === 'string' ? audioRaw.ar : '',
                 en: typeof audioRaw.en === 'string' ? audioRaw.en : '',

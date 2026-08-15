@@ -9,9 +9,9 @@ const btnStyle: React.CSSProperties = {
   gap: 5,
   padding: '4px 10px',
   borderRadius: 6,
-  border: '1px solid #c9a0ff',
-  background: 'linear-gradient(135deg, #f3e8ff, #e8d4ff)',
-  color: '#4a148c',
+  border: '1px solid #8d69bd',
+  background: '#24143b',
+  color: '#ffffff',
   fontSize: 11,
   fontWeight: 700,
   cursor: 'pointer',
@@ -75,6 +75,7 @@ export function CvAiImproveButton({
       <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
         <button
           type="button"
+          className="cv-ai-improve-btn"
           disabled={disabled || loading || !arabic.trim()}
           onClick={run}
           style={{

@@ -91,7 +91,7 @@ function setupModelAnimations(THREE: any, root: any, clips: any[], play: boolean
   return mixer;
 }
 
-function applyMaterialSettings(THREE: any, root: any, settings: ReturnType<typeof mergeGfxModel3dSettings>, forceColor = false) {
+function applyMaterialSettings(root: any, settings: ReturnType<typeof mergeGfxModel3dSettings>, forceColor = false) {
   const color = hexColor(settings.modelColor, 0x7fd44a);
   const tintAll = forceColor || settings.preserveModelColors === false;
   root.traverse((child: any) => {
@@ -334,7 +334,7 @@ export function GfxModelViewer({
         const onLoaded = (root: any, clips: any[] = [], isStl = false) => {
           if (cancelled) return;
           fitObjectToPivot(THREE, root, pivot);
-          applyMaterialSettings(THREE, root, cfg, isStl);
+          applyMaterialSettings(root, cfg, isStl);
           const playAnim = cfg.playModelAnimation !== false;
           const animSpeed = cfg.animationSpeed ?? 1;
           const mixer = setupModelAnimations(THREE, root, clips, playAnim, animSpeed);
@@ -485,7 +485,7 @@ export function GfxModelViewer({
     if (!b?.modelRoot || status !== 'ready') return;
     const THREE = window.THREE;
     if (!THREE) return;
-    applyMaterialSettings(THREE, b.modelRoot, cfg);
+    applyMaterialSettings(b.modelRoot, cfg);
   }, [cfg.metalness, cfg.roughness, cfg.modelColor, cfg.preserveModelColors, cfg.enableReflections, status]);
 
   useEffect(() => {

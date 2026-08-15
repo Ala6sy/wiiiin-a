@@ -1,22 +1,22 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  AppData, AgriArticle, AgriBook, ArticleCategory, LibraryNode, BookKind, LibraryView, GfxCategory, GfxSubCategory, GfxProjectItem, soilRowName,
-  AiVaultItem, SoftwareSnippet, SiteSettings, SocialLink, NavItem, SoilRow, ReportTemplate,
+  AppData, AgriArticle, AgriBook, ArticleCategory, LibraryNode, BookKind, LibraryView, GfxCategory, GfxSubCategory, GfxProjectItem,
+  SoftwareSnippet, SiteSettings, SocialLink, NavItem, SoilRow, ReportTemplate,
   AgriVideo, PublicReport, WebProject, BookGridSettings, DEFAULT_BOOK_GRID,
   ArticleGridSettings, DEFAULT_ARTICLE_GRID,
   normalizeImageUrlForStorage, normalizeVideoUrlForStorage,
   WebGridSettings, DEFAULT_WEB_GRID, GfxGridSettings, DEFAULT_GFX_GRID,
   ml, pickML, flattenLibrary, LangKey, uid, ML, normML,
   uploadMediaFile, readFileAsDataUrl, compressImageFileForStorage, getApiToken,
-  AgriWalkthroughSettings, WalkthroughStepSettings,
+  AgriWalkthroughSettings, WalkthroughStepSettings, WALKTHROUGH_SPEED_OPTIONS,
 } from './appData';
-import { WALKTHROUGH_STEPS } from './AgriWalkthrough';
+import AgriWalkthrough, { WALKTHROUGH_STEPS, buildOrderedWalkthroughSteps } from './AgriWalkthrough';
 import { CustomerReportsAdmin } from './CustomerReports';
 import { videoEmbed } from './SoilRequest';
 import { RichEditor } from './RichEditor';
 import { AiArticleGeneratePanel } from './AiArticleGeneratePanel';
 import { GfxAiSuggestPanel } from './GfxAiSuggestPanel';
-import { ensureGfxSeedProjects, createGfxSeedProject, addGfxSeedProjects, fillGfxSubToCount, fillGfxCategorySubs, countGfxProjectsInCategory, getSuggestedFileLabelForSub, getSuggestedToolsForSub } from './gfxProjectSeeds';
+import { ensureGfxSeedProjects, createGfxSeedProject, addGfxSeedProjects, fillGfxSubToCount, fillGfxCategorySubs, getSuggestedFileLabelForSub, getSuggestedToolsForSub } from './gfxProjectSeeds';
 import { KNOWN_GFX_FILE_TYPES, parseSourceFileLabels, joinSourceFileLabels } from './gfxFileTypes';
 import {
   SITE_FONT_OPTIONS,
@@ -34,7 +34,7 @@ import { normalizeExternalUrl, isUsableProjectLink } from './webProjectUtils';
 import { hasUsableGfxModelUrl } from './gfxMedia';
 import { GfxMediaEditor } from './GfxMediaEditor';
 import { GfxModel3dAdmin } from './GfxModel3dAdmin';
-import { mergeGfxModel3dViewSettings, prepareGlbViewSettingsForStorage } from './gfxModel3d';
+import { mergeGfxModel3dViewSettings, prepareGlbViewSettingsForStorage, type GfxModel3dSettings } from './gfxModel3d';
 import { GfxDownloadLinksEditor } from './GfxDownloadLinksEditor';
 import { getGfxDownloadLinks, getGfxDownloadLinksForEdit, applyGfxDownloadLinks } from './gfxDownloadLinks';
 import {
@@ -72,7 +72,7 @@ function ReorderBtns({ index, total, onMove }: { index: number; total: number; o
   );
 }
 
-function SourceFileLabelPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+export function SourceFileLabelPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const selected = parseSourceFileLabels(value);
   const [customDraft, setCustomDraft] = useState('');
   const knownIds = new Set(KNOWN_GFX_FILE_TYPES.map(t => t.id));
@@ -344,7 +344,7 @@ function AiKeyPanel({ aiEnabled, onToggle }: { aiEnabled: boolean; onToggle: (v:
   );
 }
 
-type Mode = 'agri' | 'gfx' | 'lab' | 'site';
+type Mode = 'agri' | 'tour' | 'gfx' | 'lab' | 'site';
 interface Props {
   mode: Mode;
   data: AppData;
@@ -369,7 +369,7 @@ function TabBar({ tabs, active, color, onChange }: { tabs: [string, string][]; a
     <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap' }}>
       {tabs.map(([key, label]) => (
         <button key={key} onClick={() => onChange(key)}
-          style={{ padding: '5px 12px', borderRadius: 20, border: `1px solid ${active === key ? color : '#ccc'}`, background: active === key ? color : '#fff', color: active === key ? '#fff' : '#333', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+          style={{ padding: '5px 12px', borderRadius: 20, border: `1px solid ${active === key ? color : 'rgba(180,205,235,0.38)'}`, background: active === key ? color : 'rgba(255,255,255,0.08)', color: '#fff', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
           {label}
         </button>
       ))}
@@ -718,6 +718,7 @@ function WalkthroughAdmin({
   const [settings, setSettings] = useState<AgriWalkthroughSettings>(data.agriWalkthrough || {});
   const [uploading, setUploading] = useState('');
   const [message, setMessage] = useState('');
+  const [previewPlaying, setPreviewPlaying] = useState(false);
 
   useEffect(() => {
     setSettings(data.agriWalkthrough || {});
@@ -727,6 +728,22 @@ function WalkthroughAdmin({
     setSettings(next);
     onSave({ agriWalkthrough: next });
   };
+
+  const orderedIds = (() => {
+    const order = settings.stepOrder?.filter(Boolean) || [];
+    if (!order.length) return WALKTHROUGH_STEPS.map(step => step.id);
+    const seen = new Set<string>();
+    const next: string[] = [];
+    for (const id of order) {
+      if (!WALKTHROUGH_STEPS.some(step => step.id === id) || seen.has(id)) continue;
+      next.push(id);
+      seen.add(id);
+    }
+    for (const step of WALKTHROUGH_STEPS) {
+      if (!seen.has(step.id)) next.push(step.id);
+    }
+    return next;
+  })();
 
   const overrides = new Map((settings.steps || []).map(step => [step.id, step]));
   const effectiveStep = (id: string): WalkthroughStepSettings => {
@@ -746,6 +763,7 @@ function WalkthroughAdmin({
         de: custom?.body?.de || base.body.de,
       },
       durationMs: custom?.durationMs || 5200,
+      speedMultiplier: custom?.speedMultiplier || 1,
       audio: custom?.audio || {},
     };
   };
@@ -758,6 +776,15 @@ function WalkthroughAdmin({
       : [...current, nextStep];
     commit({ ...settings, steps: nextSteps });
   };
+
+  const moveStep = (index: number, dir: -1 | 1) => {
+    commit({ ...settings, stepOrder: moveItem(orderedIds, index, dir) });
+  };
+
+  const previewStepId = settings.previewStepId || orderedIds[0] || 'home';
+  const previewIndex = Math.max(0, orderedIds.indexOf(previewStepId));
+  const liveData: AppData = { ...data, agriWalkthrough: { ...settings, enabled: true, autoplay: false } };
+  const enabledPreviewSteps = buildOrderedWalkthroughSteps(settings);
 
   const flash = (text: string) => {
     setMessage(text);
@@ -803,121 +830,358 @@ function WalkthroughAdmin({
     }
   };
 
+  const sectionLabel = (id: string) => {
+    const base = WALKTHROUGH_STEPS.find(step => step.id === id);
+    const section = base?.section || (
+      id.startsWith('design') || id === 'open-design' ? 'design'
+        : id.startsWith('dev') || id === 'open-dev' ? 'dev'
+          : id.startsWith('cv') || id === 'open-cv' ? 'cv'
+            : id === 'done' ? 'done'
+              : id === 'home' || id.startsWith('nav-') || id === 'tap-agri' ? 'home'
+                : 'agri'
+    );
+    return ({
+      home: 'الرئيسية',
+      agri: 'الزراعة',
+      design: 'التصاميم',
+      dev: 'البرمجة',
+      cv: 'السيرة',
+      done: 'الختام',
+    } as Record<string, string>)[section] || section;
+  };
+
   return (
     <div>
-      <div className="admin-light-panel" style={{ padding: 16, borderRadius: 12, marginBottom: 14, background: '#eef8f0', border: '1px solid #b9dfc0' }}>
+      <div className="admin-light-panel" style={{ padding: 16, borderRadius: 12, marginBottom: 14 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <div>
-            <b style={{ color: '#1f6930' }}><i className="fa-solid fa-mobile-screen-button" /> الجولة التفاعلية لقسم الزراعة</b>
-            <div style={{ color: '#52685a', fontSize: 11, marginTop: 4 }}>تعديل كل خطوة ونصوصها ومدتها وصوتها في اللغات الثلاث.</div>
+            <b><i className="fa-solid fa-mobile-screen-button" /> صفحة الجولة على الموقع</b>
+            <div style={{ opacity: .78, fontSize: 11, marginTop: 4 }}>
+              تحكم كامل بالخطوات والمؤثرات مع معاينة جوال حية تتحدث فور كل تغيير.
+            </div>
           </div>
-          <a href="/p" target="_blank" rel="noreferrer" className="btn-outline-sm" style={{ textDecoration: 'none' }}>
-            <i className="fa-solid fa-arrow-up-right-from-square" /> معاينة /p
+          <a href="/#site-walkthrough" target="_blank" rel="noreferrer" className="btn-outline-sm" style={{ textDecoration: 'none' }}>
+            <i className="fa-solid fa-arrow-up-right-from-square" /> معاينة في الرئيسية
           </a>
         </div>
-        {message && <div style={{ color: '#19743a', fontWeight: 800, fontSize: 12, marginTop: 10 }}>{message}</div>}
+        {message && <div style={{ color: '#7dffa8', fontWeight: 800, fontSize: 12, marginTop: 10 }}>{message}</div>}
       </div>
 
-      <div className="admin-light-panel" style={{ padding: 14, borderRadius: 12, marginBottom: 14, border: '1px solid #d7e4da' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 12, alignItems: 'end' }}>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, fontWeight: 800 }}>
-            <input type="checkbox" checked={settings.enabled !== false} onChange={e => commit({ ...settings, enabled: e.target.checked })} />
-            إظهار صفحة الجولة
-          </label>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, fontWeight: 800 }}>
-            <input type="checkbox" checked={settings.autoplay === true} onChange={e => commit({ ...settings, autoplay: e.target.checked })} />
-            تشغيل تلقائي
-          </label>
-          <label style={{ fontSize: 11, fontWeight: 800 }}>
-            السرعة الافتراضية
-            <select value={settings.defaultSpeed || 1} onChange={e => commit({ ...settings, defaultSpeed: Number(e.target.value) })}
-              style={{ width: '100%', padding: 7, marginTop: 5, borderRadius: 8, border: '1px solid #ccd8ce' }}>
-              <option value={0.65}>0.65×</option><option value={1}>1×</option><option value={1.5}>1.5×</option><option value={2}>2×</option>
-            </select>
-          </label>
-        </div>
-      </div>
+      <div className="tour-admin-layout">
+        <div>
+          <div className="admin-light-panel" style={{ padding: 14, borderRadius: 12, marginBottom: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 12, alignItems: 'end' }}>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, fontWeight: 800 }}>
+                <input type="checkbox" checked={settings.enabled !== false} onChange={e => commit({ ...settings, enabled: e.target.checked })} />
+                إظهار جوال الجولة في الصفحة الرئيسية
+              </label>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, fontWeight: 800 }}>
+                <input type="checkbox" checked={settings.autoplay === true} onChange={e => commit({ ...settings, autoplay: e.target.checked })} />
+                تشغيل تلقائي للزائر
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                سرعة الإدارة الأساسية
+                <select value={settings.defaultSpeed || 1} onChange={e => commit({ ...settings, defaultSpeed: Number(e.target.value) })}
+                  style={{ width: '100%', padding: 7, marginTop: 5, borderRadius: 8 }}>
+                  {WALKTHROUGH_SPEED_OPTIONS.map(value => <option key={value} value={value}>{value}×</option>)}
+                </select>
+                <small style={{ display: 'block', opacity: .68, marginTop: 4 }}>
+                  اختيار الزائر يُضرب بهذه السرعة
+                </small>
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                خطوة المعاينة السريعة
+                <select
+                  value={previewStepId}
+                  onChange={e => { commit({ ...settings, previewStepId: e.target.value }); setPreviewPlaying(false); }}
+                  style={{ width: '100%', padding: 7, marginTop: 5, borderRadius: 8 }}
+                >
+                  {orderedIds.map((id, index) => {
+                    const step = effectiveStep(id);
+                    return <option key={id} value={id}>{index + 1}. {step.title?.[lang] || id}</option>;
+                  })}
+                </select>
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                درجة التعتيم: {Math.round((settings.dimOpacity ?? 0.6) * 100)}%
+                <input type="range" min={0} max={0.9} step={0.05} value={settings.dimOpacity ?? 0.6}
+                  onChange={e => commit({ ...settings, dimOpacity: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                قوة الفوكس: {(settings.focusIntensity ?? 1).toFixed(1)}×
+                <input type="range" min={0} max={2} step={0.1} value={settings.focusIntensity ?? 1}
+                  onChange={e => commit({ ...settings, focusIntensity: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                قوة شعاع الضغط: {(settings.beamIntensity ?? 1).toFixed(1)}×
+                <input type="range" min={0} max={2} step={0.1} value={settings.beamIntensity ?? 1}
+                  onChange={e => commit({ ...settings, beamIntensity: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                توهج الزر: {(settings.buttonGlow ?? 1).toFixed(1)}×
+                <input type="range" min={0} max={2} step={0.1} value={settings.buttonGlow ?? 1}
+                  onChange={e => commit({ ...settings, buttonGlow: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                مدة حركة الضغط: {Math.round((settings.pressDurationMs ?? 420) / 10) / 100} ثانية
+                <input type="range" min={150} max={1600} step={50} value={settings.pressDurationMs ?? 420}
+                  onChange={e => commit({ ...settings, pressDurationMs: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, fontWeight: 800 }}>
+                <input type="checkbox" checked={settings.showHand !== false} onChange={e => commit({ ...settings, showHand: e.target.checked })} />
+                إظهار يد الإصبع عند الضغط
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                حجم الإصبع: {(settings.handSize ?? 1).toFixed(1)}×
+                <input type="range" min={0.5} max={2} step={0.05} value={settings.handSize ?? 1}
+                  onChange={e => commit({ ...settings, handSize: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                حركة الإصبع: {(settings.handMotion ?? 1).toFixed(1)}×
+                <input type="range" min={0} max={2} step={0.05} value={settings.handMotion ?? 1}
+                  onChange={e => commit({ ...settings, handMotion: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                لون اليد والإصبع
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
+                  <input
+                    type="color"
+                    value={settings.handColor || '#69b8ff'}
+                    onChange={e => commit({ ...settings, handColor: e.target.value })}
+                    style={{ width: 46, height: 32, padding: 2, borderRadius: 8, cursor: 'pointer' }}
+                  />
+                  <select
+                    value={(settings.handColor || '#69b8ff').toLowerCase()}
+                    onChange={e => commit({ ...settings, handColor: e.target.value })}
+                    style={{ flex: 1, padding: 7, borderRadius: 8 }}
+                  >
+                    {!['#69b8ff', '#ffffff', '#79e6ff'].includes((settings.handColor || '#69b8ff').toLowerCase()) && (
+                      <option value={(settings.handColor || '#69b8ff').toLowerCase()}>لون مخصص</option>
+                    )}
+                    <option value="#69b8ff">أزرق مشع</option>
+                    <option value="#ffffff">أبيض مشع</option>
+                    <option value="#79e6ff">سماوي مشع</option>
+                  </select>
+                </span>
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                إزاحة الإصبع أفقياً: {settings.handOffsetX ?? 0}px
+                <input type="range" min={-40} max={40} step={1} value={settings.handOffsetX ?? 0}
+                  onChange={e => commit({ ...settings, handOffsetX: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                إزاحة الإصبع عمودياً: {settings.handOffsetY ?? 0}px
+                <input type="range" min={-40} max={40} step={1} value={settings.handOffsetY ?? 0}
+                  onChange={e => commit({ ...settings, handOffsetY: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                مدة تمرير معرض التصاميم: {((settings.designScrollDurationMs ?? 5200) / 1000).toFixed(1)} ث
+                <input
+                  type="range"
+                  min={1500}
+                  max={15000}
+                  step={250}
+                  value={settings.designScrollDurationMs ?? 5200}
+                  onChange={e => commit({ ...settings, designScrollDurationMs: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }}
+                />
+                <small style={{ display: 'block', opacity: .68, marginTop: 3 }}>يبدأ بطيئاً ثم يتسارع حتى أسفل المعرض</small>
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                حجم اسم المهندس: {(settings.homeNameScale ?? 1).toFixed(2)}×
+                <input type="range" min={0.5} max={1.8} step={0.05} value={settings.homeNameScale ?? 1}
+                  onChange={e => commit({ ...settings, homeNameScale: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                حجم صورة المهندس: {(settings.homePhotoScale ?? 1).toFixed(2)}×
+                <input type="range" min={0.5} max={1.8} step={0.05} value={settings.homePhotoScale ?? 1}
+                  onChange={e => commit({ ...settings, homePhotoScale: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 800 }}>
+                مقياس محتوى الرئيسية: {(settings.homeContentScale ?? 1).toFixed(2)}×
+                <input type="range" min={0.7} max={1.25} step={0.01} value={settings.homeContentScale ?? 1}
+                  onChange={e => commit({ ...settings, homeContentScale: Number(e.target.value) })}
+                  style={{ width: '100%', marginTop: 9 }} />
+              </label>
+            </div>
+          </div>
 
-      <div className="admin-light-panel" style={{ padding: 14, borderRadius: 12, marginBottom: 14, border: '1px solid #d7e4da' }}>
-        <b style={{ fontSize: 12, color: '#244f30' }}><i className="fa-solid fa-leaf" /> صور نبات حليب الشوك المستخدمة في التصوير والتقرير</b>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 10, marginTop: 10 }}>
-          {[0, 1].map(index => {
-            const src = settings.plantImages?.[index] || '';
-            return (
-              <div key={index} style={{ border: '1px solid #d5e2d8', borderRadius: 10, padding: 8 }}>
-                {src && <img src={resolveImageSrc(src)} alt="" style={{ width: '100%', height: 105, objectFit: 'cover', borderRadius: 7, marginBottom: 7 }} />}
-                <input value={src} placeholder="رابط الصورة" onChange={e => {
-                  const images = [...(settings.plantImages || [])];
-                  images[index] = e.target.value;
-                  commit({ ...settings, plantImages: images });
-                }} style={{ width: '100%', padding: 7, borderRadius: 7, border: '1px solid #ccd8ce', direction: 'ltr', fontSize: 10 }} />
-                <label className="btn-outline-sm" style={{ display: 'block', textAlign: 'center', marginTop: 7, cursor: 'pointer' }}>
-                  <i className={`fa-solid ${uploading === `plant-${index}` ? 'fa-spinner fa-spin' : 'fa-upload'}`} /> رفع صورة
-                  <input type="file" accept="image/*" hidden onChange={e => void uploadPlantImage(index, e.target.files?.[0])} />
-                </label>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: 5, marginBottom: 12 }}>
-        {LANGS.map(item => (
-          <button key={item.code} type="button" onClick={() => setLang(item.code)}
-            style={{ padding: '6px 12px', borderRadius: 16, border: `1px solid ${lang === item.code ? '#2a7a2a' : '#ccd5cc'}`, background: lang === item.code ? '#2a7a2a' : '#fff', color: lang === item.code ? '#fff' : '#445', cursor: 'pointer', fontWeight: 800 }}>
-            {item.flag} {item.code.toUpperCase()}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {WALKTHROUGH_STEPS.map((base, index) => {
-          const step = effectiveStep(base.id);
-          const audio = step.audio?.[lang] || '';
-          return (
-            <details key={base.id} className="admin-light-panel" style={{ border: '1px solid #d9e3da', borderRadius: 11, overflow: 'hidden', background: step.enabled === false ? '#f3f3f3' : '#fff' }}>
-              <summary style={{ padding: '11px 13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 9 }}>
-                <span style={{ width: 27, height: 27, borderRadius: 8, background: '#2a7a2a', color: '#fff', display: 'inline-grid', placeItems: 'center', fontSize: 10, fontWeight: 900 }}>{index + 1}</span>
-                <b style={{ flex: 1, fontSize: 12 }}>{step.title?.[lang]}</b>
-                {audio && <i className="fa-solid fa-volume-high" style={{ color: '#2a7a2a' }} />}
-                <label onClick={e => e.stopPropagation()} style={{ fontSize: 10, display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <input type="checkbox" checked={step.enabled !== false} onChange={e => updateStep(base.id, { enabled: e.target.checked })} /> ظاهر
-                </label>
-              </summary>
-              <div style={{ padding: 13, borderTop: '1px solid #e4ebe5', display: 'grid', gap: 9 }}>
-                <label style={{ fontSize: 10, fontWeight: 800 }}>عنوان الخطوة ({lang.toUpperCase()})
-                  <input value={step.title?.[lang] || ''} onChange={e => updateStep(base.id, { title: { ...(step.title || ml('', '', '')), [lang]: e.target.value } })}
-                    style={{ width: '100%', padding: 8, borderRadius: 7, border: '1px solid #ccd8ce', marginTop: 4 }} />
-                </label>
-                <label style={{ fontSize: 10, fontWeight: 800 }}>نص الشرح ({lang.toUpperCase()})
-                  <textarea value={step.body?.[lang] || ''} rows={3} onChange={e => updateStep(base.id, { body: { ...(step.body || ml('', '', '')), [lang]: e.target.value } })}
-                    style={{ width: '100%', padding: 8, borderRadius: 7, border: '1px solid #ccd8ce', marginTop: 4, resize: 'vertical' }} />
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr auto', gap: 8, alignItems: 'end' }}>
-                  <label style={{ fontSize: 10, fontWeight: 800 }}>المدة بالثواني
-                    <input type="number" min={1.5} max={30} step={0.5} value={(step.durationMs || 5200) / 1000}
-                      onChange={e => updateStep(base.id, { durationMs: Math.round(Number(e.target.value) * 1000) })}
-                      style={{ width: '100%', padding: 7, borderRadius: 7, border: '1px solid #ccd8ce', marginTop: 4 }} />
-                  </label>
-                  <label style={{ fontSize: 10, fontWeight: 800 }}>رابط صوت الشرح ({lang.toUpperCase()})
-                    <input value={audio} placeholder="MP3 / WAV / M4A" onChange={e => updateStep(base.id, { audio: { ...(step.audio || {}), [lang]: e.target.value } })}
-                      style={{ width: '100%', padding: 7, borderRadius: 7, border: '1px solid #ccd8ce', marginTop: 4, direction: 'ltr' }} />
-                  </label>
-                  <label className="btn-outline-sm" style={{ cursor: 'pointer', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                    <i className={`fa-solid ${uploading === `audio-${base.id}-${lang}` ? 'fa-spinner fa-spin' : 'fa-microphone-lines'}`} /> رفع صوت
-                    <input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.opus" hidden onChange={e => void uploadAudio(base.id, e.target.files?.[0])} />
-                  </label>
-                </div>
-                {audio && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <audio controls src={resolveImageSrc(audio)} style={{ height: 32, flex: 1 }} />
-                    <button type="button" className="btn-danger-sm" onClick={() => updateStep(base.id, { audio: { ...(step.audio || {}), [lang]: '' } })}><i className="fa-solid fa-trash" /></button>
+          <div className="admin-light-panel" style={{ padding: 14, borderRadius: 12, marginBottom: 14 }}>
+            <b style={{ fontSize: 12 }}><i className="fa-solid fa-leaf" /> صور نبات حليب الشوك المستخدمة في التصوير والتقرير</b>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 10, marginTop: 10 }}>
+              {[0, 1].map(index => {
+                const src = settings.plantImages?.[index] || '';
+                return (
+                  <div key={index} style={{ border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, padding: 8 }}>
+                    {src && <img src={resolveImageSrc(src)} alt="" style={{ width: '100%', height: 105, objectFit: 'cover', borderRadius: 7, marginBottom: 7 }} />}
+                    <input value={src} placeholder="رابط الصورة" onChange={e => {
+                      const images = [...(settings.plantImages || [])];
+                      images[index] = e.target.value;
+                      commit({ ...settings, plantImages: images });
+                    }} style={{ width: '100%', padding: 7, borderRadius: 7, direction: 'ltr', fontSize: 10 }} />
+                    <label className="btn-outline-sm" style={{ display: 'block', textAlign: 'center', marginTop: 7, cursor: 'pointer' }}>
+                      <i className={`fa-solid ${uploading === `plant-${index}` ? 'fa-spinner fa-spin' : 'fa-upload'}`} /> رفع صورة
+                      <input type="file" accept="image/*" hidden onChange={e => void uploadPlantImage(index, e.target.files?.[0])} />
+                    </label>
                   </div>
-                )}
-              </div>
-            </details>
-          );
-        })}
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 5, marginBottom: 12, flexWrap: 'wrap' }}>
+            {LANGS.map(item => (
+              <button key={item.code} type="button" onClick={() => setLang(item.code)}
+                style={{ padding: '6px 12px', borderRadius: 16, border: `1px solid ${lang === item.code ? '#2a7a2a' : 'rgba(255,255,255,.2)'}`, background: lang === item.code ? '#2a7a2a' : 'transparent', color: '#fff', cursor: 'pointer', fontWeight: 800 }}>
+                {item.flag} {item.code.toUpperCase()}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {orderedIds.map((id, index) => {
+              const base = WALKTHROUGH_STEPS.find(step => step.id === id)!;
+              const step = effectiveStep(id);
+              const audio = step.audio?.[lang] || '';
+              const isPreview = previewStepId === id;
+              return (
+                <details key={id} className="admin-light-panel" open={isPreview} style={{ borderRadius: 11, overflow: 'hidden', opacity: step.enabled === false ? .72 : 1 }}>
+                  <summary style={{ padding: '11px 13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 9 }}>
+                    <ReorderBtns index={index} total={orderedIds.length} onMove={dir => moveStep(index, dir)} />
+                    <span style={{ width: 27, height: 27, borderRadius: 8, background: isPreview ? '#318ce3' : '#2a7a2a', color: '#fff', display: 'inline-grid', placeItems: 'center', fontSize: 10, fontWeight: 900 }}>{index + 1}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <b style={{ display: 'block', fontSize: 12 }}>{step.title?.[lang]}</b>
+                      <small style={{ opacity: .7 }}>
+                        القسم: {sectionLabel(id)} · الشاشة: {base.screen}
+                        {base.action ? ` · الزر: ${base.action}` : ''}
+                        {` · السرعة: ×${step.speedMultiplier || 1}`}
+                      </small>
+                    </div>
+                    {audio && <i className="fa-solid fa-volume-high" style={{ color: '#7dffa8' }} />}
+                    <button
+                      type="button"
+                      className="btn-outline-sm"
+                      onClick={e => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        commit({ ...settings, previewStepId: id });
+                        setPreviewPlaying(false);
+                      }}
+                      style={{ whiteSpace: 'nowrap' }}
+                    >
+                      <i className="fa-solid fa-eye" /> معاينة
+                    </button>
+                    <label onClick={e => e.stopPropagation()} style={{ fontSize: 10, display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <input type="checkbox" checked={step.enabled !== false} onChange={e => updateStep(id, { enabled: e.target.checked })} /> ظاهر
+                    </label>
+                  </summary>
+                  <div style={{ padding: 13, borderTop: '1px solid rgba(255,255,255,.08)', display: 'grid', gap: 9 }}>
+                    <label style={{ fontSize: 10, fontWeight: 800 }}>عنوان الخطوة ({lang.toUpperCase()})
+                      <input value={step.title?.[lang] || ''} onChange={e => updateStep(id, { title: { ...(step.title || ml('', '', '')), [lang]: e.target.value } })}
+                        style={{ width: '100%', padding: 8, borderRadius: 7, marginTop: 4 }} />
+                    </label>
+                    <label style={{ fontSize: 10, fontWeight: 800 }}>نص الشرح ({lang.toUpperCase()})
+                      <textarea value={step.body?.[lang] || ''} rows={3} onChange={e => updateStep(id, { body: { ...(step.body || ml('', '', '')), [lang]: e.target.value } })}
+                        style={{ width: '100%', padding: 8, borderRadius: 7, marginTop: 4, resize: 'vertical' }} />
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '120px 120px minmax(180px,1fr) auto', gap: 8, alignItems: 'end' }}>
+                      <label style={{ fontSize: 10, fontWeight: 800 }}>المدة بالثواني
+                        <input type="number" min={1.5} max={30} step={0.5} value={(step.durationMs || 5200) / 1000}
+                          onChange={e => updateStep(id, { durationMs: Math.round(Number(e.target.value) * 1000) })}
+                          style={{ width: '100%', padding: 7, borderRadius: 7, marginTop: 4 }} />
+                      </label>
+                      <label style={{ fontSize: 10, fontWeight: 800 }}>سرعة الخطوة
+                        <select
+                          value={step.speedMultiplier || 1}
+                          onChange={e => updateStep(id, { speedMultiplier: Number(e.target.value) })}
+                          style={{ width: '100%', padding: 7, borderRadius: 7, marginTop: 4 }}
+                        >
+                          {[0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10].map(value => (
+                            <option key={value} value={value}>×{value}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label style={{ fontSize: 10, fontWeight: 800 }}>رابط صوت الشرح ({lang.toUpperCase()})
+                        <input value={audio} placeholder="MP3 / WAV / M4A" onChange={e => updateStep(id, { audio: { ...(step.audio || {}), [lang]: e.target.value } })}
+                          style={{ width: '100%', padding: 7, borderRadius: 7, marginTop: 4, direction: 'ltr' }} />
+                      </label>
+                      <label className="btn-outline-sm" style={{ cursor: 'pointer', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        <i className={`fa-solid ${uploading === `audio-${id}-${lang}` ? 'fa-spinner fa-spin' : 'fa-microphone-lines'}`} /> رفع صوت
+                        <input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.opus" hidden onChange={e => void uploadAudio(id, e.target.files?.[0])} />
+                      </label>
+                    </div>
+                    {audio && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <audio controls src={resolveImageSrc(audio)} style={{ height: 32, flex: 1 }} />
+                        <button type="button" className="btn-danger-sm" onClick={() => updateStep(id, { audio: { ...(step.audio || {}), [lang]: '' } })}><i className="fa-solid fa-trash" /></button>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        </div>
+
+        <aside className="admin-light-panel tour-admin-preview-sticky" style={{ padding: 12, borderRadius: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <b style={{ fontSize: 12 }}><i className="fa-solid fa-mobile-screen" /> معاينة حية</b>
+            <span style={{ fontSize: 10, opacity: .75 }}>{enabledPreviewSteps.length} خطوة ظاهرة</span>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+            <button type="button" className="btn-outline-sm" disabled={previewIndex <= 0} onClick={() => {
+              const prev = orderedIds[previewIndex - 1];
+              if (prev) commit({ ...settings, previewStepId: prev });
+              setPreviewPlaying(false);
+            }}><i className="fa-solid fa-backward-step" /></button>
+            <button type="button" className="btn-outline-sm" onClick={() => setPreviewPlaying(v => !v)}>
+              <i className={`fa-solid ${previewPlaying ? 'fa-pause' : 'fa-play'}`} /> {previewPlaying ? 'إيقاف' : 'تشغيل'}
+            </button>
+            <button type="button" className="btn-outline-sm" disabled={previewIndex >= orderedIds.length - 1} onClick={() => {
+              const next = orderedIds[previewIndex + 1];
+              if (next) commit({ ...settings, previewStepId: next });
+              setPreviewPlaying(false);
+            }}><i className="fa-solid fa-forward-step" /></button>
+          </div>
+          <div style={{ display: 'flex', gap: 5, marginBottom: 10 }}>
+            {LANGS.map(item => (
+              <button key={item.code} type="button" onClick={() => setLang(item.code)}
+                style={{ flex: 1, padding: '5px 0', borderRadius: 8, border: `1px solid ${lang === item.code ? '#318ce3' : 'rgba(255,255,255,.18)'}`, background: lang === item.code ? '#1b4f86' : 'transparent', color: '#fff', cursor: 'pointer', fontWeight: 800, fontSize: 10 }}>
+                {item.code.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <AgriWalkthrough
+            key={`${previewStepId}-${lang}-${settings.defaultSpeed || 1}-${previewPlaying ? 'play' : 'pause'}`}
+            previewMode={!previewPlaying}
+            phoneOnly
+            forceStepId={previewPlaying ? undefined : previewStepId}
+            initialData={{
+              ...liveData,
+              agriWalkthrough: {
+                ...liveData.agriWalkthrough,
+                autoplay: previewPlaying,
+                previewStepId,
+              },
+            }}
+            initialLang={lang}
+            className="admin-tour-preview"
+          />
+          <div style={{ fontSize: 11, opacity: .78, marginTop: 8, lineHeight: 1.6 }}>
+            المعاينة تستخدم بيانات الموقع الفعلية. أي تعديل على المقاييس أو الخطوة يظهر هنا مباشرة.
+          </div>
+        </aside>
       </div>
     </div>
   );
@@ -1074,7 +1338,7 @@ function AgriAdmin({ data, onSave }: { data: AppData; onSave: (u: Partial<AppDat
         ظهور أزرار السيرة الذاتية يُدار من <strong>محرر السيرة الذاتية</strong> — يمكن إخفاؤها من هنا أو إظهارها في «نبذة عني» فقط.
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-        <TabBar tabs={[['articles','المقالات'],['tree','هيكل المكتبة'],['books','الكتب'],['ai','تشخيص AI'],['tour','جولة /p'],['media','الفيديو والتقارير'],['soil','تحليل التربة'],['template','إعدادات التقرير'],['reports','تقارير العملاء']]} active={tab} color="#2a7a2a" onChange={setTab} />
+        <TabBar tabs={[['articles','المقالات'],['tree','هيكل المكتبة'],['books','الكتب'],['ai','تشخيص AI'],['media','الفيديو والتقارير'],['soil','تحليل التربة'],['template','إعدادات التقرير'],['reports','تقارير العملاء']]} active={tab} color="#2a7a2a" onChange={setTab} />
         {(tab === 'articles' || tab === 'tree' || tab === 'books' || tab === 'template' || tab === 'media' || tab === 'soil') && (
           <div style={{ display: 'flex', gap: 4 }}>
             {LANGS.map(l => (
@@ -1086,8 +1350,6 @@ function AgriAdmin({ data, onSave }: { data: AppData; onSave: (u: Partial<AppDat
           </div>
         )}
       </div>
-
-      {tab === 'tour' && <WalkthroughAdmin data={data} onSave={onSave} />}
 
       {tab === 'articles' && (
         <>
@@ -1935,8 +2197,8 @@ function AgriAdmin({ data, onSave }: { data: AppData; onSave: (u: Partial<AppDat
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(100,220,100,0.25)', borderRadius: 10, padding: '10px 12px' }}>
                 <label style={{ fontSize: 12, fontWeight: 700, color: '#7ee87e' }}><i className={`fa-solid ${icon}`} /> {label}</label>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <input type="color" value={(tpl as Record<string,string>)[key]} onChange={e => saveTpl({ [key]: e.target.value } as Partial<import('./appData').ReportTemplate>)} style={{ width: 40, height: 30, border: '1px solid rgba(255,255,255,0.2)', borderRadius: 6, cursor: 'pointer', background: 'transparent', padding: 2, flexShrink: 0 }} />
-                  <input value={(tpl as Record<string,string>)[key]} onChange={e => saveTpl({ [key]: e.target.value } as Partial<import('./appData').ReportTemplate>)} style={{ flex: 1, padding: '5px 8px', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, direction: 'ltr', fontSize: 11, fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', color: '#e8f5e8', minWidth: 0 }} />
+                  <input type="color" value={tpl[key]} onChange={e => saveTpl({ [key]: e.target.value } as Partial<ReportTemplate>)} style={{ width: 40, height: 30, border: '1px solid rgba(255,255,255,0.2)', borderRadius: 6, cursor: 'pointer', background: 'transparent', padding: 2, flexShrink: 0 }} />
+                  <input value={tpl[key]} onChange={e => saveTpl({ [key]: e.target.value } as Partial<ReportTemplate>)} style={{ flex: 1, padding: '5px 8px', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, direction: 'ltr', fontSize: 11, fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', color: '#e8f5e8', minWidth: 0 }} />
                 </div>
               </div>
             ))}
@@ -1978,10 +2240,10 @@ function AgriAdmin({ data, onSave }: { data: AppData; onSave: (u: Partial<AppDat
                 <div key={key}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                     <label style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>{label}</label>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: '#7ee87e', direction: 'ltr' }}>{(tpl as Record<string,number>)[key]} mm</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#7ee87e', direction: 'ltr' }}>{tpl[key]} mm</span>
                   </div>
-                  <input type="range" min={min} max={max} value={(tpl as Record<string,number>)[key]}
-                    onChange={e => saveTpl({ [key]: parseInt(e.target.value) } as Partial<import('./appData').ReportTemplate>)}
+                  <input type="range" min={min} max={max} value={tpl[key]}
+                    onChange={e => saveTpl({ [key]: parseInt(e.target.value) } as Partial<ReportTemplate>)}
                     style={{ width: '100%', accentColor: '#2a7a2a', cursor: 'pointer' }} />
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,0.3)', direction: 'ltr' }}>
                     <span>{min}</span><span>{max}</span>
@@ -2163,7 +2425,6 @@ function mergeGfxProjectForSave(stored: GfxProjectItem, draft: GfxProjectItem): 
 function GfxAdmin({ data, onSave }: { data: AppData; onSave: (u: Partial<AppData>) => void }) {
   const [lang, setLang] = useState<LangKey>('ar');
   const [cats, setCats] = useState<GfxCategory[]>(data.gfxCategories || []);
-  const [aiVault, setAiVault] = useState<AiVaultItem[]>(data.aiVault || []);
   const [watermarkImg, setWatermarkImg] = useState(data.watermarkImg || '');
   const [watermarkOpacity, setWatermarkOpacity] = useState(data.watermarkOpacity ?? 0.15);
   const [selCatId, setSelCatId] = useState(cats[0]?.id || '');
@@ -2203,7 +2464,6 @@ function GfxAdmin({ data, onSave }: { data: AppData; onSave: (u: Partial<AppData
   };
 
   const commitCats = (next: GfxCategory[]) => { setCats(next); onSave({ gfxCategories: next }); };
-  const commitVault = (next: AiVaultItem[]) => { setAiVault(next); onSave({ aiVault: next }); };
   const commitWm = (img: string, op: number) => { onSave({ watermarkImg: img, watermarkOpacity: op }); };
 
   const showFillMsg = (msg: string) => {
@@ -2280,10 +2540,8 @@ function GfxAdmin({ data, onSave }: { data: AppData; onSave: (u: Partial<AppData
     if (!selCatId) return;
     const before = cats.find(c => c.id === selCatId);
     if (!before?.subCategories.length) return;
-    const beforeTotal = countGfxProjectsInCategory(before);
     mutCat(selCatId, c => fillGfxCategorySubs(c, count, mode));
     const subs = before.subCategories.length;
-    const added = mode === 'add' ? count * subs : Math.max(0, count * subs - beforeTotal);
     showFillMsg(
       mode === 'add'
         ? `تم إضافة ${count} مشروع لكل فرع (${subs} فروع) — المجموع +${count * subs}`
@@ -2680,8 +2938,8 @@ function GfxAdmin({ data, onSave }: { data: AppData; onSave: (u: Partial<AppData
                       />
                       <div className="gfx-proj-row" style={{
                         flex: 1, minWidth: 0, display: 'flex', gap: 4, alignItems: 'center',
-                        background: '#ffffff', border: '1px solid #c5d0e0', borderRadius: 7, padding: '4px 5px', overflow: 'hidden',
-                        color: '#000000',
+                        background: '#081d31', border: '1px solid rgba(137,180,225,0.3)', borderRadius: 7, padding: '4px 5px', overflow: 'hidden',
+                        color: '#ffffff',
                       }}>
                       <div
                         role="button"
@@ -2701,7 +2959,7 @@ function GfxAdmin({ data, onSave }: { data: AppData; onSave: (u: Partial<AppData
                           : <div style={{ width: 40, height: 36, background: '#eee', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#556677' }}><i className="fa-solid fa-image" style={{ fontSize: 12, color: '#556677' }} /></div>}
                         <span className="gfx-proj-title" style={{
                           flex: 1, minWidth: 0, fontSize: 12, fontWeight: 800, lineHeight: 1.35,
-                          color: '#000000', WebkitTextFillColor: '#000000',
+                          color: '#ffffff', WebkitTextFillColor: '#ffffff',
                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                         }}>{pickML(item.title, lang) || '—'}</span>
                         {missingLangs.length > 0 && <span className="gfx-proj-badge" style={{ fontSize: 9, background: '#ff9800', color: '#fff', WebkitTextFillColor: '#fff', borderRadius: 4, padding: '1px 5px', flexShrink: 0 }}>⚠ {missingLangs.map(l => l.code.toUpperCase()).join('/')}</span>}
@@ -4549,6 +4807,7 @@ function SiteSettingsAdmin({
 ══════════════════════════════════════════════════════ */
 export function ContentAdmin({ mode, data, onSave, onSiteApply, onSitePersist, serverConnected, serverSyncing, onServerConnect, onServerDisconnect }: Props) {
   if (mode === 'agri') return <AgriAdmin data={data} onSave={onSave} />;
+  if (mode === 'tour') return <WalkthroughAdmin data={data} onSave={onSave} />;
   if (mode === 'gfx') return <GfxAdmin data={data} onSave={onSave} />;
   if (mode === 'site') return (
     <SiteSettingsAdmin

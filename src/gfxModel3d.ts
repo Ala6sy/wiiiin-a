@@ -470,7 +470,6 @@ export function cameraPoseVectors(cfg: MergedGfxModel3dSettings): { camPos: { x:
 }
 
 export function applyCameraPose(camera: any, cfg: MergedGfxModel3dSettings) {
-  const THREE = window.THREE;
   const { camPos, target } = cameraPoseVectors(cfg);
   camera.position.set(camPos.x, camPos.y, camPos.z);
   camera.lookAt(target.x, target.y, target.z);
@@ -478,7 +477,6 @@ export function applyCameraPose(camera: any, cfg: MergedGfxModel3dSettings) {
 
 /** استخراج منظور كامل من OrbitControls — بدون تقريب يُسبب اختلافاً بعد الحفظ */
 export function capturePoseFromControls(camera: any, controls: any, referenceAspect?: number): GfxCameraPose {
-  const THREE = window.THREE;
   const t = controls?.target;
   if (!t) return { viewPanX: 0, viewPanY: 0, cameraDistance: 1 };
   const dist = typeof controls.getDistance === 'function'
